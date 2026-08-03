@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>PotionCraftExtraRequirements</AssemblyName>
+    <RootNamespace>PotionCraftExtraRequirements</RootNamespace>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>$(PotionCraftPath)\BepInEx\plugins\PotionCraftExtraRequirements\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>$(PotionCraftPath)\BepInEx\core\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(PotionCraftPath)\BepInEx\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PotionCraft.Core">
+      <HintPath>$(PotionCraftPath)\Potion Craft_Data\Managed\PotionCraft.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PotionCraft.Scripts">
+      <HintPath>$(PotionCraftPath)\Potion Craft_Data\Managed\PotionCraft.Scripts.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(PotionCraftPath)\Potion Craft_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(PotionCraftPath)\Potion Craft_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

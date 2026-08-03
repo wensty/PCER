@@ -1,0 +1,25 @@
+aisrc/
+.tools/
+.decompiled/
+docs
+Directory.Build.props
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# .NET build output
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+*.nupkg
+*.snupkg
+
+# Generated symbols and logs
+*.pdb
+*.log
