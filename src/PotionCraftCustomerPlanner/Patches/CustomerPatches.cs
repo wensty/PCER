@@ -2,6 +2,11 @@ using BepInEx.Logging;
 using HarmonyLib;
 using PotionCraft.ManagersSystem.Input;
 using PotionCraft.ManagersSystem.Npc;
+#if DEBUG
+using PotionCraft.ManagersSystem.Debug;
+using PotionCraft.Npc.MonoBehaviourScripts;
+using PotionCraft.ObjectBased.UIElements.Dialogue;
+#endif
 
 namespace PotionCraftCustomerPlanner;
 
@@ -61,6 +66,9 @@ internal static class CustomerPatchInstaller
                 onLoad,
                 postfix: new HarmonyMethod(typeof(CustomerPatchInstaller), nameof(NpcManagerOnLoadPostfix)));
         }
+#if DEBUG
+        RejectionDiagnosticsPatches.Install(harmony, logger);
+#endif
         logger?.LogInfo("Current-customer planner patches installed.");
         return true;
     }
@@ -87,6 +95,70 @@ internal static class CustomerPatchInstaller
         NextCustomerDirector.ResetTransientStateForSaveLoad("after NPC load");
     }
 }
+
+#if DEBUG
+internal static class RejectionDiagnosticsPatches
+{
+    private static ManualLogSource logger;
+
+    public static void Install(Harmony harmony, ManualLogSource logSource)
+    {
+        logger = logSource;
+        Patch(harmony, typeof(NpcManager), "KickNpc", nameof(NpcManagerKickNpcPrefix));
+        Patch(harmony, typeof(DebugManager), "SkipNpc", nameof(DebugManagerSkipNpcPrefix));
+        Patch(harmony, typeof(DialogueBox), "ForceEndDialogue", nameof(DialogueBoxForceEndDialoguePrefix));
+        Patch(harmony, typeof(NpcTrading), "GetRewardOnKick", nameof(NpcTradingGetRewardOnKickPrefix));
+        Patch(harmony, typeof(NpcTrading), "UpdateMoodByPotion", nameof(NpcTradingUpdateMoodByPotionPrefix));
+    }
+
+    private static void Patch(Harmony harmony, System.Type type, string methodName, string prefixName)
+    {
+        System.Reflection.MethodInfo original = AccessTools.Method(type, methodName);
+        System.Reflection.MethodInfo prefix = AccessTools.Method(typeof(RejectionDiagnosticsPatches), prefixName);
+        if (original == null || prefix == null)
+        {
+            logger?.LogWarning($"Rejection diagnostics patch skipped: {type.FullName}.{methodName}");
+            return;
+        }
+
+        harmony.Patch(original, prefix: new HarmonyMethod(prefix));
+    }
+
+    private static void NpcManagerKickNpcPrefix(NpcManager __instance)
+    {
+        RejectionDiagnostics.Write("NpcManager.KickNpc", RejectionDiagnostics.CurrentNpc(__instance), includeStack: true);
+    }
+
+    private static void DebugManagerSkipNpcPrefix(bool incrementClosenessManuallyOnKickCurrentNpc)
+    {
+        RejectionDiagnostics.Write(
+            $"DebugManager.SkipNpc(incrementCloseness={incrementClosenessManuallyOnKickCurrentNpc})",
+            RejectionDiagnostics.CurrentNpc(PotionCraft.ManagersSystem.Managers.Npc),
+            includeStack: true);
+    }
+
+    private static void DialogueBoxForceEndDialoguePrefix()
+    {
+        RejectionDiagnostics.Write(
+            "DialogueBox.ForceEndDialogue",
+            RejectionDiagnostics.CurrentNpc(PotionCraft.ManagersSystem.Managers.Npc),
+            includeStack: true);
+    }
+
+    private static void NpcTradingGetRewardOnKickPrefix(NpcTrading __instance)
+    {
+        RejectionDiagnostics.Write("NpcTrading.GetRewardOnKick", __instance?.npc, includeStack: true);
+    }
+
+    private static void NpcTradingUpdateMoodByPotionPrefix(NpcTrading __instance, bool isPotionSuitable)
+    {
+        RejectionDiagnostics.Write(
+            $"NpcTrading.UpdateMoodByPotion(isSuitable={isPotionSuitable})",
+            __instance?.npc,
+            includeStack: !isPotionSuitable);
+    }
+}
+#endif
 
 [HarmonyPatch(typeof(InputManager), nameof(InputManager.HasInputGotToBeDisabled))]
 internal static class PlannerInputBlockPatch

@@ -426,7 +426,7 @@ internal static class NextCustomerWindow
                 NextCustomerDirector.Schedule(CreatePlan(selected, targetQuest, mandatory, optional));
             actionStatus = ScheduleResultText(result);
         }
-        GUI.enabled = NextCustomerDirector.PendingCustomer != null;
+        GUI.enabled = NextCustomerDirector.ScheduledCount > 0;
         if (GUILayout.Button("Clear scheduled list", Height(28f)))
         {
             NextCustomerDirector.Clear();
@@ -435,12 +435,35 @@ internal static class NextCustomerWindow
         GUI.enabled = true;
         GUILayout.EndHorizontal();
 
-        if (NextCustomerDirector.PendingCustomer != null)
+        DrawScheduledQueueSummary();
+    }
+
+    private static void DrawScheduledQueueSummary()
+    {
+        IReadOnlyList<NextCustomerDirector.ScheduledPlanSnapshot> plans = NextCustomerDirector.ScheduledPlans;
+        if (plans.Count == 0)
+            return;
+
+        GUILayout.Space(U(4f));
+        GUILayout.Label(
+            $"Scheduled queue: pending {NextCustomerDirector.PendingScheduledCount}, "
+            + $"applied placeholders {NextCustomerDirector.AppliedPlaceholderCount}, "
+            + $"total {NextCustomerDirector.ScheduledCount}");
+
+        foreach (NextCustomerDirector.ScheduledPlanSnapshot snapshot in plans.Take(5))
+        {
+            PlannedCustomer plan = snapshot.Plan;
+            if (plan == null)
+                continue;
+            string state = snapshot.Applied ? "applied/current" : "pending";
             GUILayout.Label(
-                $"Scheduled ({NextCustomerDirector.ScheduledCount}): "
-                + NextCustomerDirector.PendingCustomer.Customer.DisplayName
-                + " / "
-                + (NextCustomerDirector.PendingCustomer.TargetQuest?.name ?? "-"));
+                $"{snapshot.Index + 1}. [{state}] "
+                + $"{CustomerPublicLabel(plan.Customer)} / "
+                + $"{plan.TargetQuest?.name ?? "-"}");
+        }
+
+        if (plans.Count > 5)
+            GUILayout.Label($"... and {plans.Count - 5} more scheduled entries");
     }
 
     private static string ScheduleResultText(NextCustomerDirector.ScheduleResult result)
@@ -727,8 +750,18 @@ internal static class NextCustomerWindow
 
     private static bool QuestHasEffect(Quest quest, string filter)
     {
-        return quest.desiredEffects != null
-            && quest.desiredEffects.Any(effect => effect != null && ContainsIgnoreCase(effect.name, filter));
+        if (quest.desiredEffects == null || string.IsNullOrWhiteSpace(filter))
+            return false;
+
+        PotionEffect exactEffect = PotionEffect.GetByName(filter.Trim(), returnFirst: false, warning: false);
+        if (exactEffect != null)
+        {
+            return quest.desiredEffects.Any(effect =>
+                effect != null
+                && string.Equals(effect.name, exactEffect.name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return quest.desiredEffects.Any(effect => effect != null && ContainsIgnoreCase(effect.name, filter));
     }
 
     private static bool QuestHasAllEffects(Quest quest, string filter)
@@ -765,16 +798,62 @@ internal static class NextCustomerWindow
     private static bool DrawQuestToggle(Quest quest, bool selectedQuest)
     {
         GUIContent content = new GUIContent(quest?.name ?? "-", EffectsText(quest));
-        bool result = GUILayout.Toggle(selectedQuest, content, "Button", Height(40f));
+        bool result = GUILayout.Toggle(selectedQuest, GUIContent.none, "Button", Height(46f));
         Rect rect = GUILayoutUtility.GetLastRect();
         if (rect.Contains(Event.current.mousePosition))
             hoverTooltip = content.tooltip;
-        DrawEffectMixedRow(
-            quest?.desiredEffects,
-            new Rect(rect.x + U(8f), rect.y + U(5f), rect.width - U(16f), rect.height - U(10f)),
-            includeText: false,
-            alignRight: true);
+        DrawCenteredQuestContent(rect, quest);
         return result;
+    }
+
+    private static void DrawCenteredQuestContent(Rect rect, Quest quest)
+    {
+        if (Event.current.type != EventType.Repaint)
+            return;
+
+        Rect contentRect = new Rect(rect.x + U(8f), rect.y + U(4f), rect.width - U(16f), rect.height - U(8f));
+        string questName = quest?.name ?? "-";
+        GUIStyle labelStyle = GUI.skin.label;
+        float nameWidth = labelStyle.CalcSize(new GUIContent(questName)).x;
+        float gap = U(10f);
+        float effectsWidth = EffectMixedRowWidth(quest?.desiredEffects, includeText: true, contentRect.width - nameWidth - gap);
+        float totalWidth = Mathf.Min(contentRect.width, nameWidth + (effectsWidth > 0f ? gap + effectsWidth : 0f));
+        float x = contentRect.x + Mathf.Max(0f, contentRect.width - totalWidth) * 0.5f;
+        GUI.Label(new Rect(x, contentRect.y, nameWidth, contentRect.height), questName);
+        if (effectsWidth > 0f)
+        {
+            DrawEffectMixedRow(
+                quest?.desiredEffects,
+                new Rect(x + nameWidth + gap, contentRect.y, effectsWidth, contentRect.height),
+                includeText: true,
+                alignRight: false,
+                centerAsGroup: false,
+                maxWidth: effectsWidth);
+        }
+    }
+
+    private static float EffectMixedRowWidth(IEnumerable<PotionEffect> effects, bool includeText, float maxWidth)
+    {
+        if (effects == null || maxWidth <= 0f)
+            return 0f;
+
+        float iconSize = InlineIconSize();
+        float spacing = InlineIconSpacing();
+        float itemSpacing = spacing + U(6f);
+        GUIStyle labelStyle = GUI.skin.label;
+        float width = 0f;
+        int count = 0;
+        foreach (PotionEffect effect in effects.Where(effect => effect != null))
+        {
+            float itemWidth = iconSize
+                + (includeText ? spacing + labelStyle.CalcSize(new GUIContent(effect.name)).x : 0f);
+            float nextWidth = width + (count > 0 ? itemSpacing : 0f) + itemWidth;
+            if (nextWidth > maxWidth && count > 0)
+                break;
+            width = Mathf.Min(nextWidth, maxWidth);
+            count++;
+        }
+        return width;
     }
 
     private static void DrawEffectIconRow(IEnumerable<PotionEffect> effects, Rect rect, bool alignRight)
@@ -827,7 +906,8 @@ internal static class NextCustomerWindow
         Rect rect,
         bool includeText,
         bool alignRight,
-        bool centerAsGroup = false)
+        bool centerAsGroup = false,
+        float maxWidth = 0f)
     {
         if (effects == null || Event.current.type != EventType.Repaint)
             return;
@@ -840,10 +920,23 @@ internal static class NextCustomerWindow
         float spacing = InlineIconSpacing();
         float itemSpacing = spacing + U(6f);
         GUIStyle labelStyle = GUI.skin.label;
-        List<float> widths = effectList
-            .Select(effect => iconSize
-                + (includeText ? spacing + labelStyle.CalcSize(new GUIContent(effect.name)).x : 0f))
-            .ToList();
+        List<float> widths = new List<float>();
+        float availableWidth = maxWidth > 0f ? maxWidth : rect.width;
+        float usedWidth = 0f;
+        foreach (PotionEffect effect in effectList)
+        {
+            float width = iconSize
+                + (includeText ? spacing + labelStyle.CalcSize(new GUIContent(effect.name)).x : 0f);
+            float nextWidth = usedWidth + (widths.Count > 0 ? itemSpacing : 0f) + width;
+            if (nextWidth > availableWidth && widths.Count > 0)
+                break;
+            widths.Add(width);
+            usedWidth = Mathf.Min(nextWidth, availableWidth);
+        }
+        if (widths.Count == 0)
+            return;
+        if (widths.Count < effectList.Count)
+            effectList = effectList.Take(widths.Count).ToList();
         float totalWidth = widths.Sum() + Math.Max(0, widths.Count - 1) * itemSpacing;
         float x = centerAsGroup
             ? rect.x + Mathf.Max(0f, rect.width - totalWidth) * 0.5f

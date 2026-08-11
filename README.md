@@ -4,133 +4,180 @@
 
 # Potion Craft Extra Requirements / Customer Planner
 
-这个仓库现在包含两个可独立加载的 BepInEx 模组：
+This repository contains two standalone BepInEx plugins for _Potion Craft:
+Alchemist Simulator_:
 
-- `PotionCraftExtraRequirements`：为《药剂工艺：炼金模拟器》增加可扩展的顾客额外要求。
-- `PotionCraftCustomerPlanner`：顾客定制器/下一个常规顾客规划窗口。
+- `PotionCraftExtraRequirements` adds extensible extra customer requirements.
+- `PotionCraftCustomerPlanner` adds an in-game regular customer planner window.
 
-两个模组可以单独使用。若同时安装，Customer Planner 会读取 Extra Requirements 暴露的
-要求目标元数据，以正确展示本 Mod 的素材类别限制等固定语义目标。
+The plugins can be used independently. When both are installed, Customer Planner
+discovers metadata exposed by Extra Requirements at runtime, so custom
+requirements such as ingredient-category restrictions can display their fixed
+semantic targets correctly.
 
-## 构建
+## Build
 
-默认游戏目录在 [Directory.Build.props](Directory.Build.props) 中配置。构建 solution 会
-直接写入两个插件目录：
+The projects expect the game install path to be provided by the `PotionCraftPath`
+MSBuild property. The intended setup is to define it as an environment variable:
+
+```powershell
+$env:PotionCraftPath = "D:\Steam\steamapps\common\Potion Craft"
+dotnet build -c Release
+```
+
+The build output is written directly to the BepInEx plugin folders:
 
 ```text
 $(PotionCraftPath)\BepInEx\plugins\PotionCraftExtraRequirements\
 $(PotionCraftPath)\BepInEx\plugins\PotionCraftCustomerPlanner\
 ```
 
-也可以覆盖游戏路径：
+You can also pass the property explicitly for a single build:
 
 ```powershell
-dotnet build -c Debug -p:PotionCraftPath="X:\Games\Potion Craft"
+dotnet build -c Release -p:PotionCraftPath="(your game install path)"
 ```
 
-## 当前要求
+## Extra Requirements
 
-| 要求                  |    解锁 |       价格倍率 |
-| --------------------- | ------: | -------------: |
-| 禁用/仅用草药         | 第 7 章 |        ×2 / ×3 |
-| 禁用/仅用蘑菇         | 第 7 章 |        ×2 / ×3 |
-| 禁用/仅用矿石         | 第 9 章 |        ×2 / ×3 |
-| 每种素材最多 1/2/3 个 | 第 4 章 | ×3 / ×2 / ×1.5 |
+Current built-in requirements:
 
-当前冲突规则：
+| Requirement                          | Unlock chapter | Price multiplier |
+| ------------------------------------ | -------------: | ---------------: |
+| No / only herbs                      |              7 |          ×2 / ×3 |
+| No / only mushrooms                  |              7 |          ×2 / ×3 |
+| No / only crystals                   |              9 |          ×2 / ×3 |
+| At most 1 / 2 / 3 of each ingredient |              4 |   ×3 / ×2 / ×1.5 |
 
-- 广谱素材限制之间互相冲突，并与 Highlander、无盐、以及不相容的指定素材/
-  主料要求冲突。
-- Highlander 之间互相冲突，并与广谱素材限制、原生主料要求、原生最大素材种类
-  要求冲突。
+Current conflict rules:
 
-各要求的启用状态、章节、生成权重、价格倍率和人气奖励会写入
-`BepInEx/config/cn.potioncraft.extra-requirements.cfg`。
+- Broad ingredient-category restrictions conflict with each other, Highlander,
+  No Salts, and incompatible particular/main ingredient requirements.
+- Highlander requirements conflict with each other, broad ingredient-category
+  restrictions, native main ingredient requirements, and native max ingredient
+  type requirements.
 
-## 本地化
+Requirement enabled state, unlock chapter, generation weight, price multiplier,
+and popularity reward are configurable in:
 
-- 默认文本：英语。
-- 当前翻译：简体中文（游戏 locale `zh`）。
-- 其它语言暂时回退到英语。
+```text
+BepInEx/config/cn.potioncraft.extra-requirements.cfg
+```
 
-Mod 文本通过游戏的 `LocalizationManager` 查询入口提供。要求列表继续使用原生
-`GeneratedQuestRequirement` 渲染，因此感叹号、加号、勾号图标、颜色、字体及
-富文本格式均来自游戏自身资源。
+## Localization
 
-每项要求分别提供少量必要文本、可选偏好文本及对应的失败反应。具体句子由
-游戏原生要求文本池随机选择，而不是由 Mod UI 自行拼接。
+- Default language: English.
+- Currently supported translation: Simplified Chinese (`zh`).
+- Other locales fall back to English.
 
-## Customer Planner：下一个常规顾客窗口
+Mod text is exposed through the game localization path. Requirement rendering
+still uses the native `GeneratedQuestRequirement` UI, so warning marks, plus
+icons, checkmarks, colors, fonts, and rich-text formatting come from the game’s
+own assets.
 
-该功能已拆分到独立工程
-`src/PotionCraftCustomerPlanner/PotionCraftCustomerPlanner.csproj`。给其它要求模组的
-接入约定见 [Customer Planner README](src/PotionCraftCustomerPlanner/README.md)。
+Each requirement provides a small set of mandatory text, optional preference
+text, and failure reaction text. The game’s native requirement text pool chooses
+the final line; the mod UI does not assemble requirement sentences manually.
 
-默认快捷键：`F2`。可在
-`BepInEx/config/cn.potioncraft.customer-planner.cfg` 的 `Next Customer Window`
-段落中修改。已有配置文件不会自动覆盖旧值；如果想使用新默认值，可以删除该配置项
-或手动改成 `ToggleShortcut = F2`。窗口字号可用同一段落下的 `UIFontSize` 调整，
-默认值为 `16`。`BlockGameInputWhenOpen = true` 时，窗口打开期间会尽量屏蔽游戏
-自身快捷键输入。
+## Customer Planner
 
-同一段落还可配置 UI 颜色：
+Customer Planner is split into its own project:
 
+```text
+src/PotionCraftCustomerPlanner/PotionCraftCustomerPlanner.csproj
+```
+
+Integration notes for other requirement mods are in
+[Customer Planner README](src/PotionCraftCustomerPlanner/README.md).
+
+Default toggle key: `F2`.
+
+Runtime settings are stored in:
+
+```text
+BepInEx/config/cn.potioncraft.customer-planner.cfg
+```
+
+Useful window options include:
+
+- `ToggleShortcut`
+- `UIFontSize`
+- `PickerFontSize`
+- `PickerIconSize`
+- `InlineIconSize`
+- `InlineIconSpacing`
+- `BlockGameInputWhenOpen`
 - `NoneButtonColor`
 - `MustButtonColor`
 - `CanButtonColor`
 - `CustomerSelectedColor`
 
-颜色使用 `#RRGGBB` 或 `#RRGGBBAA`。
+Color values use `#RRGGBB` or `#RRGGBBAA`.
 
-窗口替换的是游戏队列中的普通 faction/class 顾客槽位；如果队首是商人、额外商人、
-一次性 NPC 或已经替换好的特殊 NPC，会保留 pending 计划并等待下一个普通顾客槽位。
-候选包括普通 `Faction -> FactionClass -> NpcTemplate` 随机生成路径上的顾客，以及可重复
-plot NPC 的随机亲密度需求；不会主动选择一次性顾客或商人队列。候选会按当前章节、
-karma、派系权重、职业启用状态、NPC 解锁条件和可用 quest 过滤。
+### Planner behavior
 
-窗口支持：
+The planner modifies the active current customer only. It no longer patches the
+not-yet-spawned queue, does not mutate already-spawned waiting NPCs, and does
+not write or repair quest/template cooldown state.
 
-- 搜索需要手动点击 `Search`，打开窗口不会自动枚举顾客池。
-- 按精确内部名搜索单个顾客/派系/职业：
+When a schedule is added:
+
+- If the current customer can be modified, the planner applies the selected
+  customer, quest, and requirement set immediately.
+- If there is no current customer, or the current customer cannot be modified,
+  the schedule remains pending.
+- Each time a new NPC becomes the current customer, the planner tries the
+  pending schedule again.
+
+Strict mode limits current-customer rebuilds to normal faction/class customers.
+Non-strict mode skips most natural-spawn checks but still avoids merchants and
+customers already reserved by another pending schedule.
+
+### Search and selection
+
+The planner supports:
+
+- Manual search. Opening the window does not scan the customer pool repeatedly.
+- Exact internal-name search for:
   - `NpcTemplate.name`
   - `Faction.name`
   - `FactionClass.name`
-- 按顾客、派系、职业、模板名称搜索。
-- 效果过滤移到右侧 `Quest effect filters` 区域；可用短下拉框选择效果，选中后立即
-  加入过滤文本。单项移除可直接编辑文本，`Clear` 清空整组过滤。多个 `Needs` 效果
-  需要同时存在，任一 `Excludes` 效果存在则排除。
-- 隐藏窗口时会自动关闭当前选择列表；选择列表以内联方式展开在对应按钮下方，避免
-  IMGUI 浮动窗口坐标偏移。
-- 顾客列表项支持鼠标悬停提示，显示完整内部名、章节/karma 信息和更多 quest/effect
-  摘要。
-- 用 karma override 预览不同 karma 下的常规顾客池；这不会修改游戏实际 karma。
-- 用 chapter override 预览并排程不同章节下的常规顾客池；排程项会按该预览章节
-  生成 quest。
-- 筛选后的顾客列表只展示顾客身份和匹配 quest 数量；完整 effect 摘要保留在悬停提示
-  和右侧详情区，避免左侧列表过载。
-- 在选中顾客的匹配 quest 中指定目标 quest；排程后会锁定为该 quest。
-- 为计划顾客指定强制/可选额外要求，并按要求自身数据处理目标：
-  - 无目标要求不显示目标行，例如额外效果、多重效果、Highlander 等。
-  - 原版 wrapper 已带有 `Ingredient` / `PotionBase` 时，目标只读显示，保持原版固定
-    目标行为。
-  - 原版 wrapper 未带固定目标但要求类型需要目标时，可输入 `Ingredient.name` 或
-    `PotionBase.name`；目标框旁的 `▼` 会打开短下拉列表。
-  - 本 Mod 的素材类别限制有固定语义目标，例如 herbal/mushroom/crystal；规划器只读
-    显示该目标，不把它写成原版字符串参数。
-  - `None` / `Must` / `Can` 是普通按钮，已选中的要求可点 `None` 取消
-  - 需求表会按原版类型和可反射到的模组 tags 分组；未接入 metadata 的外部需求会显示
-    在 `Other / external`。
-  - 点选 `Must` / `Can` 时会按原版互斥规则自动重置冲突项，例如 lowlander 1/2/3、
-    基底限制类以及其它原生互斥组合。
-- `Refresh List` 只刷新已加载的额外要求列表；`Reset Config` 会清空当前
-  `None/Must/Can` 选择和需求目标。
-- 额外要求列表需要手动点击 `Refresh List` 刷新，避免窗口打开时反复扫描。
-- 在确认前检查指定要求组是否至少能在该顾客预览章节的某个可用 quest 上生成；
-  被原生或 Mod 冲突规则禁止的组合不能排程。
+- Text search over customer/faction/class/template identity.
+- Quest effect filters:
+  - `Needs` effects must all be present.
+  - `Excludes` effects remove quests containing any listed effect.
+  - Adding an effect to one side automatically removes the same effect from the
+    opposite side.
+- Chapter and karma preview overrides in non-strict mode.
+- A selected target quest for the planned customer.
 
-排程后，Mod 会在下一次实际生成顾客时替换队列首位，并在 NPC spawn 后应用指定的
-额外要求。如果实际随机到的 quest 与指定要求组仍不兼容，Mod 会保留原生随机生成的
-要求并写入 BepInEx 日志。
+Customer list rows show compact public information such as customer identity,
+gender, karma range, unlock chapter, and matching quest count. Internal names
+and full effect summaries remain available in hover tooltips.
 
-目标原料/药基目前需要输入内部名；如果内部名不存在或与 quest/其他要求冲突，窗口会
-把该要求组标记为 blocked。
+### Requirement planning
+
+The planner can assign mandatory (`Must`) and optional (`Can`) extra
+requirements to the planned customer.
+
+Target handling follows requirement metadata:
+
+- Requirements with no target show no target row.
+- Native wrappers that already contain an `Ingredient` or `PotionBase` show a
+  read-only fixed target.
+- Native target-capable requirements without a fixed wrapper target can be
+  edited with `Ingredient.name` or `PotionBase.name`; the picker button opens a
+  bounded dropdown.
+- Extra Requirements ingredient-category restrictions expose fixed semantic
+  targets such as herbs, mushrooms, and crystals.
+
+The requirement table is grouped by native type and discoverable external tags.
+Unknown external requirements are grouped under `Other / external`.
+
+Before scheduling, the planner validates the selected requirement group against
+the selected customer and target quest. Combinations blocked by native or
+external conflict rules are rejected in the planner UI.
+
+If the planner modifies the active customer while a potion is already on the
+scales, it asks the game UI to refresh request text, potion suitability, trade
+buttons, and deal value immediately.

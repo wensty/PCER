@@ -25,6 +25,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void Update()
     {
+        NextCustomerDirector.Update();
         NextCustomerWindow.Update();
     }
 

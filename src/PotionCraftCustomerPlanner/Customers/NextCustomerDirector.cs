@@ -10,6 +10,7 @@ using PotionCraft.Npc;
 using PotionCraft.Npc.MonoBehaviourScripts;
 using PotionCraft.Npc.Parts;
 using PotionCraft.Npc.Parts.Settings;
+using PotionCraft.ObjectBased;
 using PotionCraft.ObjectBased.UIElements.Dialogue;
 using PotionCraft.ObjectBased.ScalesSystem;
 using PotionCraft.QuestSystem;
@@ -17,6 +18,7 @@ using PotionCraft.ScriptableObjects;
 using PotionCraft.ScriptableObjects.Ingredient;
 using PotionCraft.Settings;
 using UnityEngine;
+using PotionScriptable = PotionCraft.ScriptableObjects.Potion.Potion;
 
 namespace PotionCraftCustomerPlanner;
 
@@ -27,15 +29,28 @@ internal static class NextCustomerDirector
     private static readonly List<PlannedCustomer> scheduledCustomers = new List<PlannedCustomer>();
     private static readonly HashSet<PlannedCustomer> appliedAppointments = new HashSet<PlannedCustomer>();
     private static NpcMonoBehaviour customerWithAppliedAppointment;
+    private static int delayedCurrentApplicationFrames = -1;
     private static readonly System.Reflection.PropertyInfo CurrentNpcProperty =
         AccessTools.Property(typeof(NpcManager), "CurrentNpcMonoBehaviour");
-    private static readonly MethodInfo CheckPotionOnSuitabilityMethod =
-        AccessTools.Method(typeof(ScalesCupDisplay), "CheckPotionOnSuitability");
+    private static readonly System.Reflection.PropertyInfo InventoryItemProperty =
+        AccessTools.Property(typeof(ItemFromInventory), "InventoryItem");
 
     public static PlannedCustomer PendingCustomer => scheduledCustomers.FirstOrDefault()
         ?? pendingCustomer;
 
     public static int ScheduledCount => scheduledCustomers.Count;
+
+    public static int PendingScheduledCount => scheduledCustomers.Count(plan => !appliedAppointments.Contains(plan));
+
+    public static int AppliedPlaceholderCount => appliedAppointments.Count;
+
+    public static IReadOnlyList<ScheduledPlanSnapshot> ScheduledPlans =>
+        scheduledCustomers
+            .Select((plan, index) => new ScheduledPlanSnapshot(
+                plan,
+                index,
+                appliedAppointments.Contains(plan)))
+            .ToList();
 
     public static void Configure(ManualLogSource logSource)
     {
@@ -70,6 +85,7 @@ internal static class NextCustomerDirector
         appliedAppointments.Clear();
         pendingCustomer = null;
         customerWithAppliedAppointment = null;
+        delayedCurrentApplicationFrames = -1;
     }
 
     public static void ResetTransientStateForSaveLoad(string phase)
@@ -77,7 +93,8 @@ internal static class NextCustomerDirector
         if (scheduledCustomers.Count == 0
             && appliedAppointments.Count == 0
             && pendingCustomer == null
-            && customerWithAppliedAppointment == null)
+            && customerWithAppliedAppointment == null
+            && delayedCurrentApplicationFrames < 0)
         {
             return;
         }
@@ -210,23 +227,47 @@ internal static class NextCustomerDirector
 
     public static void ReplaceCurrentNpcIfNeeded(NpcManager npcManager)
     {
-        if (npcManager == null)
+        if (scheduledCustomers.Count == 0 && customerWithAppliedAppointment == null)
             return;
 
-        NpcMonoBehaviour current = GetCurrentNpc(npcManager);
-        if (current == null)
+        if (TryApplyScheduledPlanToCurrent(npcManager, refreshAfterApply: false))
             return;
 
-        if (current == customerWithAppliedAppointment)
+        delayedCurrentApplicationFrames = 2;
+    }
+
+    public static void Update()
+    {
+        if (delayedCurrentApplicationFrames < 0)
+            return;
+        if (delayedCurrentApplicationFrames > 0)
         {
-            logger?.LogInfo($"Scheduled customer reached the counter; refreshing dialogue and trade state: {current.currentQuest?.name ?? "-"}");
-            RefreshDialogueBox();
-            customerWithAppliedAppointment = null;
+            delayedCurrentApplicationFrames--;
             return;
         }
 
+        delayedCurrentApplicationFrames = -1;
+        TryApplyScheduledPlanToCurrent(Managers.Npc, refreshAfterApply: true);
+    }
+
+    private static bool TryApplyScheduledPlanToCurrent(NpcManager npcManager, bool refreshAfterApply)
+    {
+        if (npcManager == null)
+            return false;
+
+        NpcMonoBehaviour current = GetCurrentNpc(npcManager);
+        if (current == null)
+            return false;
+
+        if (current == customerWithAppliedAppointment)
+        {
+            logger?.LogInfo($"Scheduled customer reached the counter: {current.currentQuest?.name ?? "-"}");
+            customerWithAppliedAppointment = null;
+            return true;
+        }
+
         if (scheduledCustomers.Count == 0)
-            return;
+            return false;
 
         PlannedCustomer naturalPlan = FirstNaturalPlanForNpc(current);
         if (naturalPlan != null)
@@ -234,23 +275,26 @@ internal static class NextCustomerDirector
             pendingCustomer = naturalPlan;
             ApplyPlanToNpc(current);
             logger?.LogInfo($"Applied scheduled current customer: {naturalPlan.Customer.DisplayName}; quest={current.currentQuest?.name ?? "-"}");
-            RefreshDialogueBox();
+            if (refreshAfterApply)
+                RefreshDialogueBox();
             CompleteScheduledPlan(naturalPlan);
-            return;
+            return true;
         }
 
         PlannedCustomer plan = FirstCurrentRebuildPlan(current, npcManager);
         if (plan == null)
-            return;
+            return false;
         pendingCustomer = plan;
 
         if (!TryRebuildCurrentNpc(npcManager, current))
-            return;
+            return false;
 
         ApplyPlanToNpc(current);
         logger?.LogInfo($"Rebuilt current NPC as scheduled customer: {plan.Customer.DisplayName}; quest={current.currentQuest?.name ?? "-"}");
-        RefreshDialogueBox();
+        if (refreshAfterApply)
+            RefreshDialogueBox();
         CompleteScheduledPlan(plan);
+        return true;
     }
 
     public static bool IsRequirementGroupAllowed(
@@ -353,7 +397,6 @@ internal static class NextCustomerDirector
         int count = appliedAppointments.Count;
         scheduledCustomers.RemoveAll(plan => appliedAppointments.Contains(plan));
         appliedAppointments.Clear();
-        customerWithAppliedAppointment = null;
         return count;
     }
 
@@ -373,15 +416,32 @@ internal static class NextCustomerDirector
 
     private static void RefreshDialogueBox()
     {
-        RefreshPotionOnScales();
         if (DialogueBox.Instance == null || Managers.Dialogue == null)
+        {
+            RefreshPotionOnScales();
             return;
+        }
 
+        DialogueState state = Managers.Dialogue.State;
+        NpcMonoBehaviour current = GetCurrentNpc(Managers.Npc);
+        bool canRebuildPotionRequestInterface =
+            current?.currentQuest != null
+            && (state == DialogueState.PotionRequest
+                || state == DialogueState.ClosenessPotionRequest);
+
+        if (canRebuildPotionRequestInterface)
+            RebuildCurrentDialogueInterface(state);
+
+        RefreshPotionOnScales();
+    }
+
+    private static void RebuildCurrentDialogueInterface(DialogueState state)
+    {
         bool previousInstant = Managers.Dialogue.changeStateInstantly;
         try
         {
             Managers.Dialogue.changeStateInstantly = true;
-            DialogueBox.Instance.UpdateBoxState(Managers.Dialogue.State);
+            DialogueBox.Instance.UpdateBoxState(state);
         }
         finally
         {
@@ -396,17 +456,11 @@ internal static class NextCustomerDirector
         if (display?.currentPotionItem == null)
         {
             Managers.Trade?.RecalculateDealCost();
+            DialogueBox.Instance?.UpdateTradeButtons();
             return;
         }
 
-        if (CheckPotionOnSuitabilityMethod != null)
-        {
-            CheckPotionOnSuitabilityMethod.Invoke(display, null);
-        }
-        else
-        {
-            Managers.Trade?.RecalculateDealCost();
-        }
+        RecalculatePotionSuitabilitySilently(scales, display);
 
         Managers.Trade?.RecalculateDealCost();
         DialogueBox.Instance?.UpdateTradeButtons();
@@ -416,6 +470,28 @@ internal static class NextCustomerDirector
         {
             DialogueBox.Instance?.UpdatePotionRequestText(1f);
         }
+    }
+
+    private static void RecalculatePotionSuitabilitySilently(Scales scales, ScalesCupDisplay display)
+    {
+        if (scales == null || display?.currentPotionItem == null)
+            return;
+
+        NpcMonoBehaviour npc = GetCurrentNpc(Managers.Npc);
+        Quest quest = npc?.currentQuest;
+        PotionScriptable potion = InventoryItemProperty?.GetValue(display.currentPotionItem, null) as PotionScriptable;
+        if (npc == null || quest == null || potion == null)
+            return;
+
+        bool suitable = PotionScriptable.GetPotionReview(potion.Effects, quest.desiredEffects).maxTier > 0
+            && GeneratedQuestRequirement.AreRequirementsCompleted(
+                potion,
+                quest,
+                npc.mandatoryQuestRequirements);
+
+        display.isCurrentPotionSuitable = suitable;
+        scales.isWrongPotionOnTheScales = !suitable;
+        scales.TargetAngle = suitable ? 0f : scales.maxAngleStringsStretched;
     }
 
     private static PlannedCustomer FirstNaturalPlanForNpc(NpcMonoBehaviour npc)
@@ -455,6 +531,11 @@ internal static class NextCustomerDirector
             reason = "No plan is selected.";
             return false;
         }
+        if (!IsNpcInPreDialogueState(current))
+        {
+            reason = "The current customer is already in dialogue; rebuilding it would trigger native decline/skip logic.";
+            return false;
+        }
 
         if (!plan.StrictPlanningMode)
         {
@@ -477,6 +558,13 @@ internal static class NextCustomerDirector
             return false;
         }
         return true;
+    }
+
+    private static bool IsNpcInPreDialogueState(NpcMonoBehaviour npc)
+    {
+        if (npc == null)
+            return false;
+        return npc.CurrentState == NpcState.Entering || npc.CurrentState == NpcState.InQueue;
     }
 
     private static bool IsCurrentNpcAnyScheduledCustomer(NpcMonoBehaviour current, PlannedCustomer exceptPlan)
@@ -1067,6 +1155,20 @@ internal static class NextCustomerDirector
         public static ScheduleResult Blocked(string reason)
         {
             return new ScheduleResult(false, false, 0, reason);
+        }
+    }
+
+    public readonly struct ScheduledPlanSnapshot
+    {
+        public PlannedCustomer Plan { get; }
+        public int Index { get; }
+        public bool Applied { get; }
+
+        public ScheduledPlanSnapshot(PlannedCustomer plan, int index, bool applied)
+        {
+            Plan = plan;
+            Index = index;
+            Applied = applied;
         }
     }
 }
