@@ -40,6 +40,7 @@ public static class RequirementCatalog
         ModLocalization.Register(definition);
     }
 
+
     public static bool TryGet(QuestRequirement requirement, out RequirementDefinition definition)
     {
         definition = null;
@@ -76,6 +77,11 @@ public static class RequirementCatalog
             QuestRequirementInQuest wrapper = new QuestRequirementInQuest(carrier);
             QuestRequirementInQuest.allRequirements.Add(wrapper);
         }
+    }
+
+    public static IReadOnlyList<RequirementDefinition> GetModDefinitions()
+    {
+        return RegistrationOrder;
     }
 
     public static bool IsCompatible(

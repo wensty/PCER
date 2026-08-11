@@ -61,7 +61,7 @@ public sealed class ConfigurableQuestRequirement : QuestRequirementNoSalts
 
             if (candidate.Tags.Contains(BuiltInRequirementDefinitions.BroadCategoryTag))
             {
-                if (existing is QuestRequirementNoSalts)
+                if (existing.GetType() == typeof(QuestRequirementNoSalts))
                     return false;
 
                 if (existing is QuestRequirementCertainIngredient)

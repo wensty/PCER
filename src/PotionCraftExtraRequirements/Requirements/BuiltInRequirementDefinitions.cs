@@ -34,7 +34,8 @@ public static class BuiltInRequirementDefinitions
             costMultiplier: 2f,
             tags: new[] { BroadCategoryTag },
             conflictingTags: new[] { BroadCategoryTag, HighlanderTag },
-            isIngredientAllowed: ingredient => ingredient.GetItemType() != itemType));
+            isIngredientAllowed: ingredient => ingredient.GetItemType() != itemType,
+            declaredTarget: RequirementTargetMetadata.FixedIngredientCategory(itemType, categoryNameEn)));
 
         RequirementCatalog.Register(new RequirementDefinition(
             id: "Only" + idSuffix,
@@ -45,7 +46,8 @@ public static class BuiltInRequirementDefinitions
             costMultiplier: 3f,
             tags: new[] { BroadCategoryTag },
             conflictingTags: new[] { BroadCategoryTag, HighlanderTag },
-            isIngredientAllowed: ingredient => ingredient.GetItemType() == itemType));
+            isIngredientAllowed: ingredient => ingredient.GetItemType() == itemType,
+            declaredTarget: RequirementTargetMetadata.FixedIngredientCategory(itemType, categoryNameEn)));
     }
 
     private static void RegisterHighlander(int maximumAmount, float multiplier)

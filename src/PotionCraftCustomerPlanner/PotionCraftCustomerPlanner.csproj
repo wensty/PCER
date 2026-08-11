@@ -3,10 +3,14 @@
     <TargetFramework>net48</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
-    <AssemblyName>PotionCraftExtraRequirements</AssemblyName>
-    <RootNamespace>PotionCraftExtraRequirements</RootNamespace>
+    <AssemblyName>PotionCraftCustomerPlanner</AssemblyName>
+    <RootNamespace>PotionCraftCustomerPlanner</RootNamespace>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <OutputPath>$(PotionCraftPath)\BepInEx\plugins\PotionCraftExtraRequirements\</OutputPath>
+    <OutputPath>$(PotionCraftPath)\BepInEx\plugins\PotionCraftCustomerPlanner\</OutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DefineConstants>$(DefineConstants);DEBUG</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

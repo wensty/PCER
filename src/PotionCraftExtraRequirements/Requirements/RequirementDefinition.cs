@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using BepInEx.Configuration;
 using PotionCraft.QuestSystem;
+using PotionCraft.ScriptableObjects;
 using PotionCraft.ScriptableObjects.Ingredient;
 using PotionCraft.ScriptableObjects.Potion;
 
@@ -20,6 +21,7 @@ public sealed class RequirementDefinition
     public Func<Potion, Quest, GeneratedQuestRequirement, bool> IsSatisfied { get; }
     public Func<Quest, IReadOnlyList<GeneratedQuestRequirement>, bool> CanGenerate { get; }
     public Func<Ingredient, bool> IsIngredientAllowed { get; }
+    public RequirementTargetMetadata DeclaredTarget { get; }
 
     internal ConfigEntry<bool> Enabled { get; set; }
     internal ConfigEntry<int> UnlockChapter { get; set; }
@@ -38,7 +40,8 @@ public sealed class RequirementDefinition
         IEnumerable<string> tags = null,
         IEnumerable<string> conflictingTags = null,
         Func<Quest, IReadOnlyList<GeneratedQuestRequirement>, bool> canGenerate = null,
-        Func<Ingredient, bool> isIngredientAllowed = null)
+        Func<Ingredient, bool> isIngredientAllowed = null,
+        RequirementTargetMetadata declaredTarget = null)
     {
         Id = id ?? throw new ArgumentNullException(nameof(id));
         Texts = texts ?? throw new ArgumentNullException(nameof(texts));
@@ -51,7 +54,40 @@ public sealed class RequirementDefinition
         ConflictingTags = new List<string>(conflictingTags ?? Array.Empty<string>());
         CanGenerate = canGenerate ?? ((_, __) => true);
         IsIngredientAllowed = isIngredientAllowed;
+        DeclaredTarget = declaredTarget;
     }
+}
+
+public sealed class RequirementTargetMetadata
+{
+    public RequirementTargetMetadataKind Kind { get; }
+    public string DisplayName { get; }
+    public InventoryItemType? IngredientCategory { get; }
+
+    private RequirementTargetMetadata(
+        RequirementTargetMetadataKind kind,
+        string displayName,
+        InventoryItemType? ingredientCategory)
+    {
+        Kind = kind;
+        DisplayName = displayName;
+        IngredientCategory = ingredientCategory;
+    }
+
+    public static RequirementTargetMetadata FixedIngredientCategory(
+        InventoryItemType category,
+        string displayName)
+    {
+        return new RequirementTargetMetadata(
+            RequirementTargetMetadataKind.FixedIngredientCategory,
+            displayName,
+            category);
+    }
+}
+
+public enum RequirementTargetMetadataKind
+{
+    FixedIngredientCategory,
 }
 
 public sealed class RequirementTexts

@@ -3,6 +3,7 @@ aisrc/
 .decompiled/
 docs
 Directory.Build.props
+.agents
 
 # Visual Studio / Rider
 .vs/
