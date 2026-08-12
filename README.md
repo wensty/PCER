@@ -21,7 +21,7 @@ The projects expect the game install path to be provided by the `PotionCraftPath
 MSBuild property. The intended setup is to define it as an environment variable:
 
 ```powershell
-$env:PotionCraftPath = "D:\Steam\steamapps\common\Potion Craft"
+$env:PotionCraftPath = "(your game install path)"
 dotnet build -c Release
 ```
 
