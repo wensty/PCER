@@ -1,4 +1,4 @@
-# The source of all this evil mod
+# Inspiration
 
 ![](img/1.png)
 
