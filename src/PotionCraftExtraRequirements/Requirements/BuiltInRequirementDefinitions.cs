@@ -60,7 +60,8 @@ public static class BuiltInRequirementDefinitions
             unlockChapter: 4,
             costMultiplier: multiplier,
             tags: new[] { HighlanderTag },
-            conflictingTags: new[] { HighlanderTag, BroadCategoryTag }));
+            conflictingTags: new[] { HighlanderTag, BroadCategoryTag },
+            popularityBonus: maximumAmount >= 2 ? 1 : 2));
     }
 
     private static RequirementTexts NoCategoryTexts(string categoryEn, string categoryZh)
