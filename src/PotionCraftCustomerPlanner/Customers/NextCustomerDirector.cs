@@ -383,6 +383,170 @@ internal static class NextCustomerDirector
         return true;
     }
 
+#if DEBUG
+    public static IReadOnlyList<string> DescribeRequirementGroupDryRun(
+        Quest targetQuest,
+        IReadOnlyList<PlannedRequirement> mandatoryRequirements,
+        IReadOnlyList<PlannedRequirement> optionalRequirements)
+    {
+        List<string> lines = new List<string>
+        {
+            "Requirement group dry-run diagnostics:",
+            $"targetQuest={targetQuest?.name ?? "-"}",
+            $"mandatory=[{string.Join(", ", (mandatoryRequirements ?? System.Array.Empty<PlannedRequirement>()).Select(PlannedRequirementText).ToArray())}]",
+            $"optional=[{string.Join(", ", (optionalRequirements ?? System.Array.Empty<PlannedRequirement>()).Select(PlannedRequirementText).ToArray())}]",
+        };
+
+        if (targetQuest == null)
+        {
+            lines.Add("- blocked: No target quest selected.");
+            return lines;
+        }
+
+        List<RequirementGenerationEntry> entries = new List<RequirementGenerationEntry>();
+        entries.AddRange((mandatoryRequirements ?? System.Array.Empty<PlannedRequirement>()).Select(requirement =>
+            new RequirementGenerationEntry(requirement, isMandatory: true)));
+        entries.AddRange((optionalRequirements ?? System.Array.Empty<PlannedRequirement>()).Select(requirement =>
+            new RequirementGenerationEntry(requirement, isMandatory: false)));
+
+        if (!PreflightValidateRequirements(entries, out string preflightReason))
+        {
+            lines.Add($"- preflight blocked: {preflightReason}");
+            return lines;
+        }
+
+        int orderIndex = 0;
+        Random.State randomState = Random.state;
+        try
+        {
+            foreach (List<RequirementGenerationEntry> order in CandidateOrders(entries))
+            {
+                orderIndex++;
+                lines.Add($"- order {orderIndex}: [{string.Join(" -> ", order.Select(EntryText).ToArray())}]");
+                RequirementGenerationResult result = TryGenerateRequirementOrderWithDiagnostics(
+                    targetQuest,
+                    order,
+                    preservedMandatory: null,
+                    preservedOptional: null,
+                    lines);
+                lines.Add(result.Success
+                    ? $"  order {orderIndex} allowed"
+                    : $"  order {orderIndex} blocked: {result.Reason}");
+                if (result.Success)
+                    break;
+            }
+        }
+        finally
+        {
+            Random.state = randomState;
+        }
+
+        return lines;
+    }
+
+    private static RequirementGenerationResult TryGenerateRequirementOrderWithDiagnostics(
+        Quest quest,
+        IReadOnlyList<RequirementGenerationEntry> order,
+        IReadOnlyList<GeneratedQuestRequirement> preservedMandatory,
+        IReadOnlyList<GeneratedQuestRequirement> preservedOptional,
+        List<string> lines)
+    {
+        List<GeneratedQuestRequirement> mandatory =
+            preservedMandatory?.ToList() ?? new List<GeneratedQuestRequirement>();
+        List<GeneratedQuestRequirement> optional =
+            preservedOptional?.ToList() ?? new List<GeneratedQuestRequirement>();
+        List<GeneratedQuestRequirement> allGenerated = new List<GeneratedQuestRequirement>();
+        allGenerated.AddRange(mandatory);
+        allGenerated.AddRange(optional);
+
+        foreach (RequirementGenerationEntry entry in order)
+        {
+            bool generatedOk = TryGenerateRequirement(
+                quest,
+                entry.PlannedRequirement,
+                allGenerated,
+                entry.IsMandatory,
+                out GeneratedQuestRequirement generated,
+                out string reason);
+            lines.Add(generatedOk
+                ? $"  generated {EntryText(entry)} => {GeneratedRequirementText(generated)}"
+                : $"  failed {EntryText(entry)}: {reason}");
+            if (!generatedOk)
+                return RequirementGenerationResult.Blocked(reason);
+
+            if (entry.IsMandatory)
+                mandatory.Add(generated);
+            else
+                optional.Add(generated);
+            allGenerated.Add(generated);
+        }
+
+        if (!AllGeneratedRequirementsValidWithDiagnostics(quest, allGenerated, lines, out string conflictReason))
+            return RequirementGenerationResult.Blocked(conflictReason);
+
+        return RequirementGenerationResult.Allowed(mandatory, optional);
+    }
+
+    private static bool AllGeneratedRequirementsValidWithDiagnostics(
+        Quest quest,
+        IReadOnlyList<GeneratedQuestRequirement> generatedRequirements,
+        List<string> lines,
+        out string reason)
+    {
+        reason = string.Empty;
+        for (int i = 0; i < generatedRequirements.Count; i++)
+        {
+            GeneratedQuestRequirement generated = generatedRequirements[i];
+            QuestRequirement requirement = generated?.requirementInQuest?.requirement;
+            if (requirement == null)
+                continue;
+
+            List<GeneratedQuestRequirement> others = generatedRequirements
+                .Where((_, index) => index != i)
+                .ToList();
+            bool compatible = requirement.IsCompatibleWithOtherRequirements(others);
+            GeneratedQuestRequirement clone = CloneGeneratedRequirementWithFixedTarget(generated);
+            bool updated = compatible && requirement.UpdateGeneratedRequirement(quest, others, clone);
+            bool matches = updated && GeneratedValuesMatch(generated, clone);
+            lines.Add(
+                $"  validate {GeneratedRequirementText(generated)}: compatible={compatible}, "
+                + $"updated={updated}, matches={matches}, clone={GeneratedRequirementText(clone)}");
+            if (compatible && updated && matches)
+                continue;
+
+            reason = $"Requirement conflict: {RequirementName(generated)} is incompatible with the selected group or target quest.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string EntryText(RequirementGenerationEntry entry)
+    {
+        return $"{(entry.IsMandatory ? "Must" : "Can")}:{PlannedRequirementText(entry.PlannedRequirement)}";
+    }
+
+    private static string PlannedRequirementText(PlannedRequirement requirement)
+    {
+        if (requirement == null)
+            return "-";
+        string target = string.IsNullOrWhiteSpace(requirement.StringTargetName)
+            ? string.Empty
+            : $" target={requirement.StringTargetName}";
+        string intTarget = requirement.IntTarget.HasValue
+            ? $" int={requirement.IntTarget.Value}"
+            : string.Empty;
+        return $"{requirement.RequirementName}{target}{intTarget}";
+    }
+
+    private static string GeneratedRequirementText(GeneratedQuestRequirement generated)
+    {
+        if (generated == null)
+            return "-";
+        return $"{RequirementName(generated)} string={generated.stringValue1 ?? "-"} int={generated.intValue1}";
+    }
+#endif
+
     private static void ApplyTargetQuest(NpcMonoBehaviour npc)
     {
         if (pendingCustomer.TargetQuest == null)

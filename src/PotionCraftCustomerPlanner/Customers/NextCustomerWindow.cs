@@ -57,6 +57,13 @@ internal static class NextCustomerWindow
     private static int pickerButtonStyleFontSize;
     private static string hoverTooltip = string.Empty;
     private static bool targetPickerOpen;
+    private static Rect targetPickerAnchorScreenRect;
+    private static Rect targetPickerAnchorGuiRect;
+    private static string targetPickerAnchorKey = string.Empty;
+    private static string targetPickerAnchorSource = string.Empty;
+    private static Rect targetPickerFallbackGuiRect;
+    private static readonly Dictionary<string, PickerAnchorCacheEntry> PickerAnchorCache =
+        new Dictionary<string, PickerAnchorCacheEntry>(StringComparer.Ordinal);
     private static string targetPickerRequirementName = string.Empty;
     private static string targetPickerTitle = string.Empty;
     private static string[] targetPickerOptions = Array.Empty<string>();
@@ -226,11 +233,17 @@ internal static class NextCustomerWindow
     {
         hoverTooltip = string.Empty;
 
+        bool pickerBlocksContent = PickerBlocksCurrentEvent(out Rect pickerRect);
+        bool oldEnabled = GUI.enabled;
+        if (pickerBlocksContent)
+            GUI.enabled = false;
         GUILayout.BeginHorizontal();
         DrawFiltersAndCustomers();
         DrawSelectedCustomerAndRequirements();
         GUILayout.EndHorizontal();
+        GUI.enabled = oldEnabled;
 
+        DrawPickerOverlay(pickerRect);
         GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f));
     }
 
@@ -332,6 +345,8 @@ internal static class NextCustomerWindow
 #if DEBUG
         if (GUILayout.Button("Log spawn diagnostics", Height(26f)))
             LogSpawnDiagnostics(selected, targetQuest, matchingQuests);
+        if (GUILayout.Button("Log window diagnostics", Height(26f)))
+            LogWindowDiagnostics();
 #endif
         for (int i = 0; i < matchingQuests.Count && i < 8; i++)
         {
@@ -814,18 +829,22 @@ internal static class NextCustomerWindow
         Rect contentRect = new Rect(rect.x + U(8f), rect.y + U(4f), rect.width - U(16f), rect.height - U(8f));
         string questName = quest?.name ?? "-";
         GUIStyle labelStyle = GUI.skin.label;
-        float nameWidth = labelStyle.CalcSize(new GUIContent(questName)).x;
+        GUIContent questNameContent = new GUIContent(questName);
+        Vector2 nameSize = labelStyle.CalcSize(questNameContent);
+        float nameWidth = nameSize.x;
         float gap = U(10f);
-        float effectsWidth = EffectMixedRowWidth(quest?.desiredEffects, includeText: true, contentRect.width - nameWidth - gap);
+        float effectsWidth = EffectMixedRowWidth(quest?.desiredEffects, includeText: false, contentRect.width - nameWidth - gap);
         float totalWidth = Mathf.Min(contentRect.width, nameWidth + (effectsWidth > 0f ? gap + effectsWidth : 0f));
         float x = contentRect.x + Mathf.Max(0f, contentRect.width - totalWidth) * 0.5f;
-        GUI.Label(new Rect(x, contentRect.y, nameWidth, contentRect.height), questName);
+        float nameHeight = Mathf.Min(contentRect.height, nameSize.y);
+        float nameY = contentRect.y + Mathf.Max(0f, contentRect.height - nameHeight) * 0.5f;
+        GUI.Label(new Rect(x, nameY, nameWidth, nameHeight), questNameContent, labelStyle);
         if (effectsWidth > 0f)
         {
             DrawEffectMixedRow(
                 quest?.desiredEffects,
                 new Rect(x + nameWidth + gap, contentRect.y, effectsWidth, contentRect.height),
-                includeText: true,
+                includeText: false,
                 alignRight: false,
                 centerAsGroup: false,
                 maxWidth: effectsWidth);
@@ -1098,6 +1117,12 @@ internal static class NextCustomerWindow
         foreach (Quest quest in allSpawnableQuests)
             LogQuestDiagnostics(lines, selected.Faction, quest, "Spawnable quest");
 
+        LogSelectedIngredientTargetDiagnostics(lines, targetQuest);
+        lines.AddRange(NextCustomerDirector.DescribeRequirementGroupDryRun(
+            targetQuest,
+            SelectedRequirements(RequirementSelection.Mandatory),
+            SelectedRequirements(RequirementSelection.Optional)));
+
         lines.Add("===== Spawn diagnostics end =====");
         lines.Add(string.Empty);
         WriteSpawnDiagnostics(lines);
@@ -1132,6 +1157,113 @@ internal static class NextCustomerWindow
             + $"maxQuestSpawnWeight={FormatWeight(maxQuestWeight)}, effects=[{effectText}]");
     }
 
+    private static void LogSelectedIngredientTargetDiagnostics(List<string> lines, Quest targetQuest)
+    {
+        lines.Add("Selected ingredient target diagnostics:");
+        if (targetQuest == null)
+        {
+            lines.Add("- No target quest selected.");
+            return;
+        }
+
+        int count = 0;
+        foreach (KeyValuePair<string, RequirementSelection> pair in RequirementSelections
+            .Where(pair => pair.Value != RequirementSelection.None)
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            QuestRequirementInQuest requirement = cachedRequirements.FirstOrDefault(item =>
+                item?.requirement != null
+                && string.Equals(item.requirement.name, pair.Key, StringComparison.OrdinalIgnoreCase))
+                ?? FindRequirement(pair.Key);
+            if (requirement?.requirement is not QuestRequirementCertainIngredient certainIngredient)
+                continue;
+
+            count++;
+            RequirementTargets.TryGetValue(pair.Key, out string target);
+            lines.Add(
+                $"- Requirement {pair.Key}, selection={pair.Value}, configuredTarget={(string.IsNullOrWhiteSpace(target) ? "-" : target)}, "
+                + $"wrapperIngredient={requirement.ingredient?.name ?? "-"}");
+            LogIngredientRequirementRuleDiagnostics(lines, certainIngredient, targetQuest);
+            if (!string.IsNullOrWhiteSpace(target))
+                LogSingleIngredientCandidateDiagnostics(lines, certainIngredient, targetQuest, target, "configured target");
+            if (requirement.ingredient != null)
+                LogSingleIngredientCandidateDiagnostics(lines, certainIngredient, targetQuest, requirement.ingredient.name, "wrapper ingredient");
+        }
+
+        if (count == 0)
+            lines.Add("- No selected QuestRequirementCertainIngredient requirements.");
+    }
+
+    private static void LogIngredientRequirementRuleDiagnostics(
+        List<string> lines,
+        QuestRequirementCertainIngredient certainIngredient,
+        Quest targetQuest)
+    {
+        int chapter = PreviewChapter();
+        ElementType[] dominantElements = EnabledDominantElements(targetQuest, chapter);
+        bool checkPotential = GetPrivateBool(certainIngredient, IngredientCheckPotentialField, fallback: true);
+        bool shortDistancePotential = GetPrivateBool(certainIngredient, IngredientShortDistancePotentialField, fallback: false);
+        float potentialThreshold = GetPrivateFloat(certainIngredient, IngredientPotentialThresholdField, fallback: 0.2f);
+        int unlockedCount = Ingredient.allIngredients?.Count(ingredient => ingredient != null && IsIngredientUnlocked(ingredient)) ?? 0;
+        int compatibleCount = Ingredient.allIngredients?.Count(ingredient =>
+            ingredient != null
+            && IsIngredientUnlocked(ingredient)
+            && IngredientMatchesCertainIngredientRule(certainIngredient, ingredient, targetQuest, out _)) ?? 0;
+
+        lines.Add(
+            $"  rule: chapter={chapter}, checkPotential={checkPotential}, "
+            + $"shortDistancePotential={shortDistancePotential}, threshold={potentialThreshold:0.#########}, "
+            + $"enabledDominantElements=[{string.Join(", ", dominantElements.Select(element => element.ToString()).ToArray())}], "
+            + $"unlockedIngredients={unlockedCount}, compatibleUnlockedIngredients={compatibleCount}");
+    }
+
+    private static void LogSingleIngredientCandidateDiagnostics(
+        List<string> lines,
+        QuestRequirementCertainIngredient certainIngredient,
+        Quest targetQuest,
+        string ingredientName,
+        string label)
+    {
+        Ingredient ingredient = Ingredient.GetByName(ingredientName, returnFirst: false, warning: false);
+        if (ingredient == null)
+        {
+            lines.Add($"  {label}: ingredient not found: {ingredientName}");
+            return;
+        }
+
+        bool compatible = IngredientMatchesCertainIngredientRule(
+            certainIngredient,
+            ingredient,
+            targetQuest,
+            out string reason);
+        bool inPickerOptions = TargetOptions(
+                RequirementTargetKind.Ingredient,
+                targetQuest,
+                new QuestRequirementInQuest(certainIngredient))
+            .Any(option => string.Equals(option, ingredient.name, StringComparison.OrdinalIgnoreCase));
+        lines.Add(
+            $"  {label} {ingredient.name}: chapter={ingredient.chapter}, unlocked={IsIngredientUnlocked(ingredient)}, "
+            + $"compatible={compatible}, inCurrentPickerOptions={inPickerOptions}, reason={reason}");
+        lines.Add($"  {label} potentials: {IngredientPotentialsText(certainIngredient, ingredient, targetQuest)}");
+    }
+
+    private static string IngredientPotentialsText(
+        QuestRequirementCertainIngredient certainIngredient,
+        Ingredient ingredient,
+        Quest targetQuest)
+    {
+        int chapter = PreviewChapter();
+        ElementType[] dominantElements = EnabledDominantElements(targetQuest, chapter);
+        if (dominantElements.Length == 0)
+            return "(no enabled quest dominant elements)";
+
+        bool shortDistancePotential = GetPrivateBool(certainIngredient, IngredientShortDistancePotentialField, fallback: false);
+        ElementalPotential elementalPotential = ingredient.GetElementalPotential(shortDistancePotential);
+        return string.Join(
+            ", ",
+            dominantElements.Select(element => $"{element}={elementalPotential.GetPotential(element):0.#########}").ToArray());
+    }
+
     private static void WriteSpawnDiagnostics(IReadOnlyList<string> lines)
     {
         try
@@ -1150,6 +1282,96 @@ internal static class NextCustomerWindow
             searchStatus = $"Failed to write spawn diagnostics: {ex.Message}";
             logger?.LogWarning($"Failed to write spawn diagnostics: {ex}");
         }
+    }
+
+    private static void LogWindowDiagnostics()
+    {
+        List<string> lines = new List<string>();
+        Event evt = Event.current;
+        Rect pickerRect = targetPickerOpen ? PickerOverlayRect(U(260f)) : Rect.zero;
+        Rect anchorGuiFromScreen = targetPickerOpen ? ScreenRectToGuiRect(targetPickerAnchorScreenRect) : Rect.zero;
+        Vector2 mouseGui = evt?.mousePosition ?? Vector2.zero;
+        Vector2 mouseScreen = GUIUtility.GUIToScreenPoint(mouseGui);
+        lines.Add("===== Window diagnostics begin =====");
+        lines.Add($"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+        lines.Add($"eventType={evt?.type.ToString() ?? "-"}, mouseGui={Vec(mouseGui)}, mouseScreen={Vec(mouseScreen)}");
+        lines.Add($"screen={Screen.width}x{Screen.height}, windowRect={RectText(windowRect)}");
+        lines.Add($"targetPickerOpen={targetPickerOpen}, mode={targetPickerMode}, targetKind={targetPickerTargetKind}, requirementName={targetPickerRequirementName}");
+        lines.Add($"targetPickerTitle={targetPickerTitle}, options={targetPickerOptions?.Length ?? 0}, cachedOptions={targetPickerCachedOptions?.Length ?? 0}");
+        lines.Add($"anchorKey={targetPickerAnchorKey}, anchorSource={targetPickerAnchorSource}");
+        lines.Add($"anchorGuiOriginal={RectText(targetPickerAnchorGuiRect)}");
+        lines.Add($"anchorFallbackGui={RectText(targetPickerFallbackGuiRect)}");
+        lines.Add($"anchorScreen={RectText(targetPickerAnchorScreenRect)}");
+        lines.Add($"anchorGuiFromScreen={RectText(anchorGuiFromScreen)}");
+        if (!string.IsNullOrEmpty(targetPickerAnchorKey)
+            && PickerAnchorCache.TryGetValue(targetPickerAnchorKey, out PickerAnchorCacheEntry cachedAnchor))
+        {
+            lines.Add(
+                $"anchorCache: gui={RectText(cachedAnchor.GuiRect)}, screen={RectText(cachedAnchor.ScreenRect)}, "
+                + $"valid={IsValidAnchorRect(cachedAnchor.ScreenRect)}, event={cachedAnchor.EventType}, frame={cachedAnchor.FrameCount}");
+        }
+        else
+        {
+            lines.Add("anchorCache: -");
+        }
+        lines.Add($"pickerRect={RectText(pickerRect)}");
+        lines.Add($"pickerContainsMouseGui={pickerRect.Contains(mouseGui)}");
+        lines.Add($"anchorContainsMouseGuiViaScreen={ScreenRectContainsGuiPoint(targetPickerAnchorScreenRect, mouseGui)}");
+        lines.Add($"requirementsScroll={Vec(requirementsScroll)}, targetPickerScroll={Vec(targetPickerScroll)}");
+        lines.Add($"uiFontSize={uiFontSize?.Value.ToString() ?? "-"}, pickerFontSize={PickerFontSize()}, scaleUnit={U(1f):0.###}");
+        PickerLayoutMetrics metrics = PickerLayout(U(260f));
+        lines.Add(
+            $"rowHeight={metrics.RowHeight:0.###}, desiredViewport={metrics.DesiredViewportHeight:0.###}, "
+            + $"chromeHeight={metrics.ChromeHeight:0.###}, viewportHeight={metrics.ViewportHeight:0.###}");
+        lines.Add(
+            $"pickerBudget: outerHeight={metrics.OuterHeight:0.###}, innerHeight={metrics.InnerHeight:0.###}, "
+            + $"padding={metrics.Padding:0.###}, titleHeight={metrics.TitleHeight:0.###}, "
+            + $"titleSpacing={metrics.TitleSpacing:0.###}, bottomMargin={metrics.BottomMargin:0.###}");
+        if (targetPickerOpen)
+            AddPickerLayoutDiagnostics(lines, U(260f), metrics);
+        lines.Add("===== Window diagnostics end =====");
+        lines.Add(string.Empty);
+        WriteWindowDiagnostics(lines);
+    }
+
+    private static void AddPickerLayoutDiagnostics(List<string> lines, float width, PickerLayoutMetrics metrics)
+    {
+        lines.Add(
+            $"layout: width={width:0.###}, minHeight={metrics.MinOuterHeight:0.###}, "
+            + $"maxDownHeight={metrics.MaxDownHeight:0.###}, maxUpHeight={metrics.MaxUpHeight:0.###}, "
+            + $"openUp={metrics.OpenUp}, availableHeight={metrics.AvailableHeight:0.###}, "
+            + $"visibleRows={metrics.VisibleRows}, desiredRows={metrics.DesiredRows}, "
+            + $"rows={metrics.Rows}, computedHeight={metrics.OuterHeight:0.###}");
+    }
+
+    private static void WriteWindowDiagnostics(IReadOnlyList<string> lines)
+    {
+        try
+        {
+            string directory = Path.GetDirectoryName(typeof(Plugin).Assembly.Location);
+            if (string.IsNullOrWhiteSpace(directory))
+                directory = Environment.CurrentDirectory;
+            Directory.CreateDirectory(directory);
+            string path = Path.Combine(directory, "WindowDiagnostics.txt");
+            File.AppendAllLines(path, lines);
+            actionStatus = $"Window diagnostics written to {path}";
+            logger?.LogInfo($"Window diagnostics written to {path}");
+        }
+        catch (Exception ex)
+        {
+            actionStatus = $"Failed to write window diagnostics: {ex.Message}";
+            logger?.LogWarning($"Failed to write window diagnostics: {ex}");
+        }
+    }
+
+    private static string RectText(Rect rect)
+    {
+        return $"x={rect.x:0.###}, y={rect.y:0.###}, w={rect.width:0.###}, h={rect.height:0.###}, xMax={rect.xMax:0.###}, yMax={rect.yMax:0.###}";
+    }
+
+    private static string Vec(Vector2 value)
+    {
+        return $"x={value.x:0.###}, y={value.y:0.###}";
     }
 
     private static float FactionWeightAtKarma(Faction faction, int karma)
@@ -1267,8 +1489,6 @@ internal static class NextCustomerWindow
         }
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
-        if (IsTargetPickerOpen(name))
-            DrawInlineTargetPicker(indent: 104f, width: 260f);
     }
 
     private static Sprite TargetValueSprite(RequirementTargetKind kind, string value)
@@ -1340,8 +1560,12 @@ internal static class NextCustomerWindow
         Quest targetQuest,
         RequirementTargetInfo targetInfo)
     {
-        if (GUILayout.Button("▼", Width(32f)))
-            OpenTargetPicker(requirement, name, targetQuest, targetInfo, GUILayoutUtility.GetLastRect());
+        string anchorKey = RequirementTargetAnchorKey(name);
+        bool open = GUILayout.Button("▼", Width(32f));
+        Rect buttonRect = GUILayoutUtility.GetLastRect();
+        CachePickerAnchor(anchorKey, buttonRect);
+        if (open)
+            OpenTargetPicker(requirement, name, targetQuest, targetInfo, anchorKey, buttonRect);
         if (GUILayout.Button("Clear", Width(55f)))
             SetRequirementTargetValue(name, string.Empty, updateSelection: true);
     }
@@ -1351,8 +1575,16 @@ internal static class NextCustomerWindow
         string name,
         Quest targetQuest,
         RequirementTargetInfo targetInfo,
+        string anchorKey,
         Rect buttonRect)
     {
+        if (!TryResolvePickerAnchor(anchorKey, buttonRect, out Rect anchorScreenRect, out Rect anchorGuiRect, out string anchorSource))
+        {
+            actionStatus = $"Cannot open picker: missing valid anchor for {name}.";
+            LogInvalidPickerAnchor(anchorKey, buttonRect);
+            return;
+        }
+
         targetPickerMode = PickerMode.RequirementTarget;
         targetPickerTargetKind = targetInfo.Kind;
         targetPickerRequirementName = name;
@@ -1361,6 +1593,11 @@ internal static class NextCustomerWindow
         RebuildPickerOptionCache();
         targetPickerScroll = Vector2.zero;
         targetPickerOpen = true;
+        targetPickerAnchorKey = anchorKey;
+        targetPickerAnchorSource = anchorSource;
+        targetPickerFallbackGuiRect = buttonRect;
+        targetPickerAnchorGuiRect = anchorGuiRect;
+        targetPickerAnchorScreenRect = anchorScreenRect;
     }
 
     private static bool IsTargetPickerOpen(string requirementName)
@@ -1370,44 +1607,199 @@ internal static class NextCustomerWindow
             && string.Equals(targetPickerRequirementName, requirementName, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsEffectPickerOpen(PickerMode pickerMode)
+    private static bool PickerBlocksCurrentEvent(out Rect pickerRect)
     {
-        return targetPickerOpen
-            && targetPickerMode == pickerMode
-            && string.IsNullOrEmpty(targetPickerRequirementName);
+        pickerRect = Rect.zero;
+        if (!targetPickerOpen)
+            return false;
+
+        Event evt = Event.current;
+        pickerRect = PickerOverlayRect(U(260f));
+        return (evt.type == EventType.MouseDown
+                || evt.type == EventType.MouseUp
+                || evt.type == EventType.MouseDrag
+                || evt.type == EventType.ScrollWheel)
+            && pickerRect.Contains(evt.mousePosition);
     }
 
-    private static void DrawInlineTargetPicker(float indent, float width)
+    private static void DrawPickerOverlay(Rect pickerRect)
     {
-        GUILayout.BeginHorizontal();
-        GUILayout.Space(U(indent));
-        GUILayout.BeginVertical(GUI.skin.box, Width(width));
-        DrawInlinePickerOptions(U(width));
-        GUILayout.EndVertical();
-        GUILayout.FlexibleSpace();
-        GUILayout.EndHorizontal();
-    }
+        if (!targetPickerOpen)
+            return;
 
-    private static void DrawInlinePickerOptions(float width)
-    {
-        GUILayout.Label(targetPickerTitle);
-        float height = Mathf.Clamp(targetPickerOptions.Length * PickerRowHeight() + U(8f), U(72f), U(300f));
-        targetPickerScroll = GUILayout.BeginScrollView(
-            targetPickerScroll,
-            false,
-            true,
-            GUILayout.Width(width),
-            GUILayout.Height(height));
+        if (pickerRect == Rect.zero)
+            pickerRect = PickerOverlayRect(U(260f));
+        Event evt = Event.current;
+        bool pointerEvent = evt.type == EventType.MouseDown
+            || evt.type == EventType.MouseUp
+            || evt.type == EventType.MouseDrag
+            || evt.type == EventType.ScrollWheel;
+        if (pointerEvent
+            && !pickerRect.Contains(evt.mousePosition)
+            && !ScreenRectContainsGuiPoint(targetPickerAnchorScreenRect, evt.mousePosition))
+        {
+            ClosePicker();
+            evt.Use();
+            return;
+        }
+
+        GUI.Box(pickerRect, GUIContent.none);
+        DrawLocalBorder(pickerRect, new Color(0.95f, 0.78f, 0.45f, 1f), U(2f));
+        PickerLayoutMetrics metrics = PickerLayout(pickerRect.width);
+        GUILayout.BeginArea(new Rect(
+            pickerRect.x + metrics.Padding,
+            pickerRect.y + metrics.Padding,
+            pickerRect.width - metrics.Padding * 2f,
+            pickerRect.height - metrics.Padding * 2f));
+        GUILayout.Label(targetPickerTitle, GUILayout.Height(metrics.TitleHeight));
+        GUILayout.Space(metrics.TitleSpacing);
+        targetPickerScroll = GUILayout.BeginScrollView(targetPickerScroll, false, true, GUILayout.Height(metrics.ViewportHeight));
         foreach (PickerOption option in targetPickerCachedOptions)
         {
             if (GUILayout.Button(GUIContent.none, PickerButtonStyle(), GUILayout.Height(PickerRowHeight())))
             {
                 ApplyPickerOption(option.Value);
-                targetPickerOpen = false;
+                ClosePicker();
             }
             DrawPickerOptionOverlay(option);
         }
         GUILayout.EndScrollView();
+        GUILayout.EndArea();
+
+        if (pickerRect.Contains(evt.mousePosition) && pointerEvent)
+            evt.Use();
+    }
+
+    private static Rect PickerOverlayRect(float width)
+    {
+        PickerLayoutMetrics metrics = PickerLayout(width);
+        Rect anchor = metrics.Anchor;
+        float height = metrics.OuterHeight;
+        float x = anchor.x;
+        float y = metrics.OpenUp ? anchor.y - height - U(2f) : anchor.yMax + U(2f);
+        float windowWidth = windowRect.width;
+        float windowHeight = windowRect.height;
+        if (x + width > windowWidth - U(8f))
+            x = Mathf.Max(U(8f), windowWidth - width - U(8f));
+        y = Mathf.Clamp(y, U(28f), Mathf.Max(U(28f), windowHeight - height - metrics.BottomMargin));
+
+        return new Rect(x, y, width, height);
+    }
+
+    private static string RequirementTargetAnchorKey(string requirementName)
+    {
+        return $"RequirementTarget:{requirementName}";
+    }
+
+    private static string EffectAnchorKey(PickerMode pickerMode)
+    {
+        return pickerMode == PickerMode.ExcludesEffect
+            ? "ExcludesEffect"
+            : "NeedsEffect";
+    }
+
+    private static void CachePickerAnchor(string key, Rect guiRect)
+    {
+        if (string.IsNullOrEmpty(key) || !IsValidAnchorRect(guiRect))
+            return;
+
+        PickerAnchorCache[key] = new PickerAnchorCacheEntry(
+            guiRect,
+            RectToScreenRect(guiRect),
+            Event.current?.type.ToString() ?? "-",
+            Time.frameCount);
+    }
+
+    private static bool TryResolvePickerAnchor(
+        string key,
+        Rect fallbackGuiRect,
+        out Rect screenRect,
+        out Rect guiRect,
+        out string source)
+    {
+        if (!string.IsNullOrEmpty(key)
+            && PickerAnchorCache.TryGetValue(key, out PickerAnchorCacheEntry cached)
+            && IsValidAnchorRect(cached.ScreenRect))
+        {
+            screenRect = cached.ScreenRect;
+            guiRect = cached.GuiRect;
+            source = $"cached:{cached.EventType}@{cached.FrameCount}";
+            return true;
+        }
+
+        if (IsValidAnchorRect(fallbackGuiRect))
+        {
+            screenRect = RectToScreenRect(fallbackGuiRect);
+            guiRect = fallbackGuiRect;
+            source = "fallback";
+            return true;
+        }
+
+        screenRect = Rect.zero;
+        guiRect = fallbackGuiRect;
+        source = "none";
+        return false;
+    }
+
+    private static bool IsValidAnchorRect(Rect rect)
+    {
+        return rect.width > U(4f)
+            && rect.height > U(4f)
+            && !float.IsNaN(rect.x)
+            && !float.IsNaN(rect.y)
+            && !float.IsNaN(rect.width)
+            && !float.IsNaN(rect.height);
+    }
+
+    private static void LogInvalidPickerAnchor(string key, Rect fallbackGuiRect)
+    {
+#if DEBUG
+        WriteWindowDiagnostics(new[]
+        {
+            "===== Invalid picker anchor =====",
+            $"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}",
+            $"key={key}, fallbackGuiRect={RectText(fallbackGuiRect)}, fallbackValid={IsValidAnchorRect(fallbackGuiRect)}",
+            $"cacheExists={PickerAnchorCache.ContainsKey(key)}",
+            PickerAnchorCache.TryGetValue(key, out PickerAnchorCacheEntry cached)
+                ? $"cachedGui={RectText(cached.GuiRect)}, cachedScreen={RectText(cached.ScreenRect)}, cachedValid={IsValidAnchorRect(cached.ScreenRect)}, cachedEvent={cached.EventType}, cachedFrame={cached.FrameCount}"
+                : "cached=-",
+            string.Empty,
+        });
+#endif
+    }
+
+    private static Rect RectToScreenRect(Rect rect)
+    {
+        Vector2 min = GUIUtility.GUIToScreenPoint(new Vector2(rect.xMin, rect.yMin));
+        Vector2 max = GUIUtility.GUIToScreenPoint(new Vector2(rect.xMax, rect.yMax));
+        return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
+    }
+
+    private static Rect ScreenRectToGuiRect(Rect rect)
+    {
+        Vector2 min = GUIUtility.ScreenToGUIPoint(new Vector2(rect.xMin, rect.yMin));
+        Vector2 max = GUIUtility.ScreenToGUIPoint(new Vector2(rect.xMax, rect.yMax));
+        return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
+    }
+
+    private static bool ScreenRectContainsGuiPoint(Rect screenRect, Vector2 guiPoint)
+    {
+        Vector2 screenPoint = GUIUtility.GUIToScreenPoint(guiPoint);
+        return screenRect.Contains(screenPoint);
+    }
+
+    private static void DrawLocalBorder(Rect rect, Color color, float thickness)
+    {
+        if (Event.current.type != EventType.Repaint)
+            return;
+        EnsureBorderTexture();
+        Color oldColor = GUI.color;
+        GUI.color = color;
+        GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, thickness), borderTexture);
+        GUI.DrawTexture(new Rect(rect.x, rect.yMax - thickness, rect.width, thickness), borderTexture);
+        GUI.DrawTexture(new Rect(rect.x, rect.y, thickness, rect.height), borderTexture);
+        GUI.DrawTexture(new Rect(rect.xMax - thickness, rect.y, thickness, rect.height), borderTexture);
+        GUI.color = oldColor;
     }
 
     private static void RebuildPickerOptionCache()
@@ -1415,6 +1807,51 @@ internal static class NextCustomerWindow
         targetPickerCachedOptions = targetPickerOptions
             .Select(option => new PickerOption(option, PickerOptionContent(option), null))
             .ToArray();
+    }
+
+    private static PickerLayoutMetrics PickerLayout(float width)
+    {
+        Rect anchor = ScreenRectToGuiRect(targetPickerAnchorScreenRect);
+        float rowHeight = PickerRowHeight();
+        float padding = U(6f);
+        float titleHeight = PickerFontSize() + U(8f);
+        float titleSpacing = U(4f);
+        float bottomMargin = U(4f);
+        int maxRows = Mathf.Max(1, Mathf.FloorToInt(U(300f) / rowHeight));
+        int desiredRows = Mathf.Clamp(targetPickerOptions.Length, 1, maxRows);
+        float desiredViewportHeight = desiredRows * rowHeight;
+        float chromeHeight = padding * 2f + titleHeight + titleSpacing;
+        float minOuterHeight = chromeHeight + rowHeight;
+        float maxDownHeight = Mathf.Max(minOuterHeight, windowRect.height - (anchor.yMax + U(2f)) - bottomMargin);
+        float maxUpHeight = Mathf.Max(minOuterHeight, anchor.y - U(28f) - U(2f));
+        bool openUp = maxDownHeight < desiredViewportHeight + chromeHeight
+            && maxUpHeight > maxDownHeight;
+        float availableHeight = openUp ? maxUpHeight : maxDownHeight;
+        int visibleRows = Mathf.Max(1, Mathf.FloorToInt((availableHeight - chromeHeight) / rowHeight));
+        int rows = Mathf.Min(visibleRows, desiredRows);
+        float viewportHeight = rows * rowHeight;
+        float outerHeight = viewportHeight + chromeHeight;
+        float innerHeight = outerHeight - padding * 2f;
+        return new PickerLayoutMetrics(
+            anchor,
+            rowHeight,
+            padding,
+            titleHeight,
+            titleSpacing,
+            bottomMargin,
+            chromeHeight,
+            desiredViewportHeight,
+            minOuterHeight,
+            maxDownHeight,
+            maxUpHeight,
+            openUp,
+            availableHeight,
+            visibleRows,
+            desiredRows,
+            rows,
+            viewportHeight,
+            innerHeight,
+            outerHeight);
     }
 
     private static GUIContent PickerOptionContent(string option)
@@ -1677,16 +2114,38 @@ internal static class NextCustomerWindow
         if (!checkPotential)
             return true;
 
+        if (IngredientMatchesCertainIngredientRule(certainIngredient, ingredient, targetQuest, out reason))
+        {
+            IngredientCompatibilityCache[cacheKey] = true;
+            return true;
+        }
+
+        IngredientCompatibilityCache[cacheKey] = false;
+        return false;
+    }
+
+    private static bool IngredientMatchesCertainIngredientRule(
+        QuestRequirementCertainIngredient certainIngredient,
+        Ingredient ingredient,
+        Quest targetQuest,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (certainIngredient == null || ingredient == null || targetQuest == null)
+            return true;
+
+        bool checkPotential = GetPrivateBool(
+            certainIngredient,
+            IngredientCheckPotentialField,
+            fallback: true);
+        if (!checkPotential)
+            return true;
+
         int chapter = PreviewChapter();
-        ElementType[] dominantElements = (targetQuest.desiredEffects ?? Array.Empty<PotionEffect>())
-            .Where(effect => effect != null && effect.IsEnabledForChapter(chapter))
-            .Select(effect => effect.elementalPotential.GetDominantElementType())
-            .Distinct()
-            .ToArray();
+        ElementType[] dominantElements = EnabledDominantElements(targetQuest, chapter);
         if (dominantElements.Length == 0)
         {
             reason = $"Target ingredient {ingredient.name} cannot be validated because the target quest has no enabled effects for chapter {chapter}.";
-            IngredientCompatibilityCache[cacheKey] = false;
             return false;
         }
 
@@ -1700,14 +2159,19 @@ internal static class NextCustomerWindow
             fallback: 0.2f);
         ElementalPotential elementalPotential = ingredient.GetElementalPotential(shortDistancePotential);
         if (dominantElements.Any(element => elementalPotential.GetPotential(element) >= potentialThreshold))
-        {
-            IngredientCompatibilityCache[cacheKey] = true;
             return true;
-        }
 
-        reason = $"Target ingredient {ingredient.name} does not match the elemental potential required by {requirement.requirement.name} for quest {targetQuest.name}.";
-        IngredientCompatibilityCache[cacheKey] = false;
+        reason = $"Target ingredient {ingredient.name} does not match the elemental potential required by {certainIngredient.name} for quest {targetQuest.name}.";
         return false;
+    }
+
+    private static ElementType[] EnabledDominantElements(Quest targetQuest, int chapter)
+    {
+        return (targetQuest?.desiredEffects ?? Array.Empty<PotionEffect>())
+            .Where(effect => effect != null && effect.IsEnabledForChapter(chapter))
+            .Select(effect => effect.elementalPotential.GetDominantElementType())
+            .Distinct()
+            .ToArray();
     }
 
     private static bool GetPrivateBool(object instance, FieldInfo field, bool fallback)
@@ -2218,8 +2682,12 @@ internal static class NextCustomerWindow
     {
         GUILayout.BeginHorizontal();
         GUILayout.Label(label, Width(95f));
-        if (GUILayout.Button("Select effect ▼", Width(180f)))
-            OpenEffectPicker(pickerMode, GUILayoutUtility.GetLastRect());
+        string anchorKey = EffectAnchorKey(pickerMode);
+        bool open = GUILayout.Button("Select effect ▼", Width(180f));
+        Rect buttonRect = GUILayoutUtility.GetLastRect();
+        CachePickerAnchor(anchorKey, buttonRect);
+        if (open)
+            OpenEffectPicker(pickerMode, anchorKey, buttonRect);
         string result = value ?? string.Empty;
         result = GUILayout.TextField(result, Width(420f));
         if (GUILayout.Button("Clear", Width(55f)))
@@ -2227,8 +2695,6 @@ internal static class NextCustomerWindow
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
         SetEffectFilterValue(pickerMode, result);
-        if (IsEffectPickerOpen(pickerMode))
-            DrawInlineTargetPicker(indent: 95f, width: 260f);
         if (pickerMode == PickerMode.NeedsEffect)
             return mustHaveEffectFilter;
         if (pickerMode == PickerMode.ExcludesEffect)
@@ -2269,8 +2735,15 @@ internal static class NextCustomerWindow
         return tokens.Length == 0 ? "-" : string.Join(", ", tokens);
     }
 
-    private static void OpenEffectPicker(PickerMode pickerMode, Rect buttonRect)
+    private static void OpenEffectPicker(PickerMode pickerMode, string anchorKey, Rect buttonRect)
     {
+        if (!TryResolvePickerAnchor(anchorKey, buttonRect, out Rect anchorScreenRect, out Rect anchorGuiRect, out string anchorSource))
+        {
+            actionStatus = $"Cannot open effect picker: missing valid anchor for {pickerMode}.";
+            LogInvalidPickerAnchor(anchorKey, buttonRect);
+            return;
+        }
+
         targetPickerMode = pickerMode;
         targetPickerTargetKind = RequirementTargetKind.None;
         targetPickerRequirementName = string.Empty;
@@ -2283,11 +2756,21 @@ internal static class NextCustomerWindow
         RebuildPickerOptionCache();
         targetPickerScroll = Vector2.zero;
         targetPickerOpen = true;
+        targetPickerAnchorKey = anchorKey;
+        targetPickerAnchorSource = anchorSource;
+        targetPickerFallbackGuiRect = buttonRect;
+        targetPickerAnchorGuiRect = anchorGuiRect;
+        targetPickerAnchorScreenRect = anchorScreenRect;
     }
 
     private static void ClosePicker()
     {
         targetPickerOpen = false;
+        targetPickerAnchorKey = string.Empty;
+        targetPickerAnchorSource = string.Empty;
+        targetPickerFallbackGuiRect = Rect.zero;
+        targetPickerAnchorGuiRect = Rect.zero;
+        targetPickerAnchorScreenRect = Rect.zero;
         targetPickerOptions = Array.Empty<string>();
         targetPickerCachedOptions = Array.Empty<PickerOption>();
         targetPickerTargetKind = RequirementTargetKind.None;
@@ -2734,6 +3217,87 @@ internal static class NextCustomerWindow
             Value = value;
             Content = content;
             Sprite = sprite;
+        }
+    }
+
+    private readonly struct PickerAnchorCacheEntry
+    {
+        public Rect GuiRect { get; }
+        public Rect ScreenRect { get; }
+        public string EventType { get; }
+        public int FrameCount { get; }
+
+        public PickerAnchorCacheEntry(Rect guiRect, Rect screenRect, string eventType, int frameCount)
+        {
+            GuiRect = guiRect;
+            ScreenRect = screenRect;
+            EventType = eventType;
+            FrameCount = frameCount;
+        }
+    }
+
+    private readonly struct PickerLayoutMetrics
+    {
+        public Rect Anchor { get; }
+        public float RowHeight { get; }
+        public float Padding { get; }
+        public float TitleHeight { get; }
+        public float TitleSpacing { get; }
+        public float BottomMargin { get; }
+        public float ChromeHeight { get; }
+        public float DesiredViewportHeight { get; }
+        public float MinOuterHeight { get; }
+        public float MaxDownHeight { get; }
+        public float MaxUpHeight { get; }
+        public bool OpenUp { get; }
+        public float AvailableHeight { get; }
+        public int VisibleRows { get; }
+        public int DesiredRows { get; }
+        public int Rows { get; }
+        public float ViewportHeight { get; }
+        public float InnerHeight { get; }
+        public float OuterHeight { get; }
+
+        public PickerLayoutMetrics(
+            Rect anchor,
+            float rowHeight,
+            float padding,
+            float titleHeight,
+            float titleSpacing,
+            float bottomMargin,
+            float chromeHeight,
+            float desiredViewportHeight,
+            float minOuterHeight,
+            float maxDownHeight,
+            float maxUpHeight,
+            bool openUp,
+            float availableHeight,
+            int visibleRows,
+            int desiredRows,
+            int rows,
+            float viewportHeight,
+            float innerHeight,
+            float outerHeight)
+        {
+            Anchor = anchor;
+            RowHeight = rowHeight;
+            Padding = padding;
+            TitleHeight = titleHeight;
+            TitleSpacing = titleSpacing;
+            BottomMargin = bottomMargin;
+            ChromeHeight = chromeHeight;
+            DesiredViewportHeight = desiredViewportHeight;
+            MinOuterHeight = minOuterHeight;
+            MaxDownHeight = maxDownHeight;
+            MaxUpHeight = maxUpHeight;
+            OpenUp = openUp;
+            AvailableHeight = availableHeight;
+            VisibleRows = visibleRows;
+            DesiredRows = desiredRows;
+            Rows = rows;
+            ViewportHeight = viewportHeight;
+            InnerHeight = innerHeight;
+            OuterHeight = outerHeight;
         }
     }
 
