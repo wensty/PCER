@@ -122,8 +122,8 @@ internal static class CustomerPlannerLocalization
             ["filters.title"] = new LocalizedLine("Quest effect filters", "任务效果筛选"),
             ["filters.needs"] = new LocalizedLine("Needs", "需要"),
             ["filters.excludes"] = new LocalizedLine("Excludes", "排除"),
-            ["filters.needsAll"] = new LocalizedLine("Needs all", "全部需要"),
-            ["filters.excludesAny"] = new LocalizedLine("Excludes\nany", "任意\n排除"),
+            ["filters.needsAll"] = new LocalizedLine("Needs all", "需要全部"),
+            ["filters.excludesAny"] = new LocalizedLine("Excludes any", "排除任意"),
             ["filters.searchHint"] = new LocalizedLine("Click Search after changing filters.", "修改筛选器后点击搜索。"),
             ["filters.selectEffect"] = new LocalizedLine("Select effect ▼", "选择效果 ▼"),
 

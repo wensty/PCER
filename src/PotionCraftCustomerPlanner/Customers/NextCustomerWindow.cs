@@ -40,7 +40,7 @@ internal static class NextCustomerWindow
     private static ConfigEntry<string> customerSelectedColor;
 
     private static bool visible;
-    private static Rect windowRect = new Rect(60f, 60f, 1320f, 860f);
+    private static Rect windowRect = new Rect(60f, 60f, 1720f, 860f);
     private static bool randomRuleWindowVisible;
     private static Rect randomRuleWindowRect = new Rect(120f, 120f, 860f, 720f);
     private static Vector2 customersScroll;
@@ -66,6 +66,9 @@ internal static class NextCustomerWindow
     private static GUIStyle windowTitleStyle;
     private static int windowTitleStyleFontSize;
     private static string windowTitleStyleFontKey = string.Empty;
+    private static GUIStyle noWrapLabelStyle;
+    private static int noWrapLabelStyleFontSize;
+    private static string noWrapLabelStyleFontKey = string.Empty;
     private static string hoverTooltip = string.Empty;
     private static bool targetPickerOpen;
     private static Rect targetPickerAnchorScreenRect;
@@ -73,6 +76,7 @@ internal static class NextCustomerWindow
     private static string targetPickerAnchorKey = string.Empty;
     private static string targetPickerAnchorSource = string.Empty;
     private static Rect targetPickerFallbackGuiRect;
+    private static Rect targetPickerModalRect;
     private static readonly Dictionary<string, PickerAnchorCacheEntry> PickerAnchorCache =
         new Dictionary<string, PickerAnchorCacheEntry>(StringComparer.Ordinal);
     private static string targetPickerRequirementName = string.Empty;
@@ -235,6 +239,7 @@ internal static class NextCustomerWindow
         try
         {
             EnsureWindowFitsFont();
+            HandlePickerOutsideClick();
             windowRect = GUILayout.Window(
                 0x5E71,
                 windowRect,
@@ -250,6 +255,7 @@ internal static class NextCustomerWindow
                     string.Empty);
                 DrawWindowBorder(randomRuleWindowRect, focused: true);
             }
+            DrawPickerModalWindow();
             DrawHoverTooltip();
         }
         finally
@@ -258,22 +264,32 @@ internal static class NextCustomerWindow
         }
     }
 
+    private static void HandlePickerOutsideClick()
+    {
+        if (!targetPickerOpen)
+            return;
+
+        Event evt = Event.current;
+        if (evt.type != EventType.MouseDown)
+            return;
+
+        Rect pickerRect = RootPickerOverlayRect(U(260f));
+        if (pickerRect.Contains(evt.mousePosition))
+            return;
+
+        ClosePicker();
+        evt.Use();
+    }
+
     private static void DrawWindow(int id)
     {
         hoverTooltip = string.Empty;
         DrawWindowTitle(T("window.title"), windowRect.width);
 
-        bool pickerBlocksContent = PickerBlocksCurrentEvent(out Rect pickerRect);
-        bool oldEnabled = GUI.enabled;
-        if (pickerBlocksContent)
-            GUI.enabled = false;
         GUILayout.BeginHorizontal();
         DrawFiltersAndCustomers();
         DrawSelectedCustomerAndRequirements();
         GUILayout.EndHorizontal();
-        GUI.enabled = oldEnabled;
-
-        DrawPickerOverlay(pickerRect);
         GUI.DragWindow(new Rect(0f, 0f, 10000f, WindowTitleHeight()));
     }
 
@@ -348,15 +364,31 @@ internal static class NextCustomerWindow
     {
         GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
         RegularCustomerOption selected = cachedCustomers.Count == 0 ? null : cachedCustomers[selectedCustomerIndex];
+        NormalizeOptionalSelectionsForCurrentMode();
 
         DrawEffectFilters();
         GUILayout.Space(U(6f));
-        detailsScroll = GUILayout.BeginScrollView(detailsScroll, false, true, Height(185f));
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandHeight(true));
+        DrawSelectedCustomerPlannerColumn(selected);
+        GUILayout.Space(U(8f));
+        DrawRequirementEditorColumn(selected);
+        GUILayout.EndHorizontal();
+
+        GUILayout.EndVertical();
+    }
+
+    private static void DrawSelectedCustomerPlannerColumn(RegularCustomerOption selected)
+    {
+        GUILayout.BeginVertical(Width(680f), GUILayout.ExpandHeight(true));
+
+        detailsScroll = GUILayout.BeginScrollView(detailsScroll, false, true, GUILayout.ExpandHeight(true));
         DrawSelectedCustomerDetails(selected);
         GUILayout.EndScrollView();
 
         GUILayout.Space(U(6f));
-        DrawRequirementSelector(selected);
+        DrawRequirementPlanStatusAndActions(selected);
+
         GUILayout.EndVertical();
     }
 
@@ -398,10 +430,9 @@ internal static class NextCustomerWindow
             GUILayout.Label(T("details.moreQuests", matchingQuests.Count - 8));
     }
 
-    private static void DrawRequirementSelector(RegularCustomerOption selected)
+    private static void DrawRequirementEditorColumn(RegularCustomerOption selected)
     {
-        NormalizeOptionalSelectionsForCurrentMode();
-
+        GUILayout.BeginVertical(GUI.skin.box, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
         GUILayout.BeginHorizontal();
         GUILayout.Label(T("requirements.title"));
         if (GUILayout.Button(T("requirements.refresh"), Width(130f)))
@@ -449,7 +480,7 @@ internal static class NextCustomerWindow
 
             GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.BeginHorizontal();
-            GUILayout.Label(name, Width(300f));
+            GUILayout.Label(name, NoWrapLabelStyle(), Width(RequirementNameColumnWidth()));
             DrawRequirementSelectionButton(name, state, RequirementSelection.None, T("requirements.none"), limits);
             DrawRequirementSelectionButton(name, state, RequirementSelection.Mandatory, T("requirements.must"), limits);
             DrawRequirementSelectionButton(name, state, RequirementSelection.Optional, T("requirements.can"), limits);
@@ -459,7 +490,12 @@ internal static class NextCustomerWindow
             GUILayout.EndVertical();
         }
         GUILayout.EndScrollView();
+        GUILayout.EndVertical();
+    }
 
+    private static void DrawRequirementPlanStatusAndActions(RegularCustomerOption selected)
+    {
+        Quest targetQuest = SelectedQuest(selected);
         List<PlannedRequirement> mandatory = SelectedRequirements(RequirementSelection.Mandatory);
         List<PlannedRequirement> optional = SelectedRequirements(RequirementSelection.Optional);
         string blockReason = string.Empty;
@@ -478,7 +514,6 @@ internal static class NextCustomerWindow
         GUILayout.Space(U(6f));
         GUILayout.Label(valid ? T("requirements.groupAllowed") : T("requirements.groupBlocked", blockReason));
         DrawPlannerActionButtons(selected, targetQuest, mandatory, optional, valid);
-
         DrawScheduledQueueSummary();
     }
 
@@ -1443,7 +1478,7 @@ internal static class NextCustomerWindow
     private static void DrawEffectTokenIconRow(string label, string value)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, Width(FilterLabelWidth()));
+        GUILayout.Label(label, NoWrapLabelStyle(), Width(EffectFilterLabelWidth()));
         Rect rowRect = GUILayoutUtility.GetRect(1f, Mathf.Max(RowHeight(), InlineIconSize() + U(10f)), GUILayout.ExpandWidth(true));
         string[] tokens = EffectFilterTokens(value);
         if (tokens.Length == 0)
@@ -1829,7 +1864,7 @@ internal static class NextCustomerWindow
     {
         List<string> lines = new List<string>();
         Event evt = Event.current;
-        Rect pickerRect = targetPickerOpen ? PickerOverlayRect(U(260f)) : Rect.zero;
+        Rect pickerRect = targetPickerOpen ? RootPickerOverlayRect(U(260f)) : Rect.zero;
         Rect anchorGuiFromScreen = targetPickerOpen ? ScreenRectToGuiRect(targetPickerAnchorScreenRect) : Rect.zero;
         Vector2 mouseGui = evt?.mousePosition ?? Vector2.zero;
         Vector2 mouseScreen = GUIUtility.GUIToScreenPoint(mouseGui);
@@ -1860,7 +1895,7 @@ internal static class NextCustomerWindow
         lines.Add($"anchorContainsMouseGuiViaScreen={ScreenRectContainsGuiPoint(targetPickerAnchorScreenRect, mouseGui)}");
         lines.Add($"requirementsScroll={Vec(requirementsScroll)}, targetPickerScroll={Vec(targetPickerScroll)}");
         lines.Add($"uiFontSize={uiFontSize?.Value.ToString() ?? "-"}, pickerFontSize={PickerFontSize()}, scaleUnit={U(1f):0.###}");
-        PickerLayoutMetrics metrics = PickerLayout(U(260f));
+        PickerLayoutMetrics metrics = RootPickerLayout(U(260f));
         lines.Add(
             $"rowHeight={metrics.RowHeight:0.###}, desiredViewport={metrics.DesiredViewportHeight:0.###}, "
             + $"chromeHeight={metrics.ChromeHeight:0.###}, viewportHeight={metrics.ViewportHeight:0.###}");
@@ -2014,19 +2049,19 @@ internal static class NextCustomerWindow
 
         RequirementTargets.TryGetValue(name, out string value);
         GUILayout.BeginHorizontal();
-        GUILayout.Label(targetInfo.Label, Width(80f));
+        GUILayout.Label(targetInfo.Label, NoWrapLabelStyle(), Width(RequirementTargetLabelWidth()));
         Sprite targetSprite = TargetValueSprite(targetInfo.Kind, targetInfo.Editable ? value : targetInfo.FixedValue);
-        GUILayout.Space(U(24f));
+        GUILayout.Space(U(RequirementTargetIconColumnWidth()));
         DrawSpriteInRect(targetSprite, GUILayoutUtility.GetLastRect());
         if (targetInfo.Editable)
         {
-            string editedValue = GUILayout.TextField(value ?? string.Empty, Width(180f));
+            string editedValue = GUILayout.TextField(value ?? string.Empty, Width(RequirementTargetValueWidth()));
             SetRequirementTargetValue(name, editedValue, updateSelection: true);
             DrawTargetPickerButton(requirement, name, targetQuest, targetInfo);
         }
         else
         {
-            GUILayout.Label(targetInfo.FixedValue ?? "-", Width(180f));
+            GUILayout.Label(targetInfo.FixedValue ?? "-", Width(RequirementTargetValueWidth()));
         }
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
@@ -2102,12 +2137,12 @@ internal static class NextCustomerWindow
         RequirementTargetInfo targetInfo)
     {
         string anchorKey = RequirementTargetAnchorKey(name);
-        bool open = GUILayout.Button("▼", Width(32f));
+        bool open = GUILayout.Button("▼", Width(RequirementTargetPickerButtonWidth()));
         Rect buttonRect = GUILayoutUtility.GetLastRect();
         CachePickerAnchor(anchorKey, buttonRect);
         if (open)
             OpenTargetPicker(requirement, name, targetQuest, targetInfo, anchorKey, buttonRect);
-        if (GUILayout.Button(T("target.clear"), Width(55f)))
+        if (GUILayout.Button(T("target.clear"), Width(RequirementTargetClearButtonWidth())))
             SetRequirementTargetValue(name, string.Empty, updateSelection: true);
     }
 
@@ -2148,50 +2183,50 @@ internal static class NextCustomerWindow
             && string.Equals(targetPickerRequirementName, requirementName, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool PickerBlocksCurrentEvent(out Rect pickerRect)
+    private static void PreparePickerModalInput(Event evt)
     {
-        pickerRect = Rect.zero;
-        if (!targetPickerOpen)
-            return false;
+        if (evt == null)
+            return;
 
-        Event evt = Event.current;
-        pickerRect = PickerOverlayRect(U(260f));
-        return (evt.type == EventType.MouseDown
-                || evt.type == EventType.MouseUp
-                || evt.type == EventType.MouseDrag
-                || evt.type == EventType.ScrollWheel)
-            && pickerRect.Contains(evt.mousePosition);
+        if (evt.type == EventType.MouseDown)
+        {
+            GUIUtility.hotControl = 0;
+            GUIUtility.keyboardControl = 0;
+        }
     }
 
-    private static void DrawPickerOverlay(Rect pickerRect)
+    private static void DrawPickerModalWindow()
     {
         if (!targetPickerOpen)
             return;
 
-        if (pickerRect == Rect.zero)
-            pickerRect = PickerOverlayRect(U(260f));
+        targetPickerModalRect = RootPickerOverlayRect(U(260f));
+        targetPickerModalRect = GUI.Window(0x5E74, targetPickerModalRect, DrawPickerModalContents, GUIContent.none);
+        GUI.BringWindowToFront(0x5E74);
+        DrawWindowBorder(targetPickerModalRect, focused: true);
+    }
+
+    private static void DrawPickerModalContents(int id)
+    {
         Event evt = Event.current;
-        bool pointerEvent = evt.type == EventType.MouseDown
-            || evt.type == EventType.MouseUp
-            || evt.type == EventType.MouseDrag
-            || evt.type == EventType.ScrollWheel;
-        if (pointerEvent
-            && !pickerRect.Contains(evt.mousePosition)
-            && !ScreenRectContainsGuiPoint(targetPickerAnchorScreenRect, evt.mousePosition))
+        if (evt.type == EventType.KeyDown && evt.keyCode == KeyCode.Escape)
         {
             ClosePicker();
             evt.Use();
             return;
         }
 
-        GUI.Box(pickerRect, GUIContent.none);
-        DrawLocalBorder(pickerRect, new Color(0.95f, 0.78f, 0.45f, 1f), U(2f));
-        PickerLayoutMetrics metrics = PickerLayout(pickerRect.width);
+        bool oldEnabled = GUI.enabled;
+        GUI.enabled = true;
+        Rect localRect = new Rect(0f, 0f, targetPickerModalRect.width, targetPickerModalRect.height);
+        GUI.Box(localRect, GUIContent.none);
+        DrawLocalBorder(localRect, new Color(0.95f, 0.78f, 0.45f, 1f), U(2f));
+        PickerLayoutMetrics metrics = RootPickerLayout(localRect.width);
         GUILayout.BeginArea(new Rect(
-            pickerRect.x + metrics.Padding,
-            pickerRect.y + metrics.Padding,
-            pickerRect.width - metrics.Padding * 2f,
-            pickerRect.height - metrics.Padding * 2f));
+            metrics.Padding,
+            metrics.Padding,
+            localRect.width - metrics.Padding * 2f,
+            localRect.height - metrics.Padding * 2f));
         GUILayout.Label(targetPickerTitle, GUILayout.Height(metrics.TitleHeight));
         GUILayout.Space(metrics.TitleSpacing);
         targetPickerScroll = GUILayout.BeginScrollView(targetPickerScroll, false, true, GUILayout.Height(metrics.ViewportHeight));
@@ -2206,23 +2241,21 @@ internal static class NextCustomerWindow
         }
         GUILayout.EndScrollView();
         GUILayout.EndArea();
-
-        if (pickerRect.Contains(evt.mousePosition) && pointerEvent)
-            evt.Use();
+        GUI.enabled = oldEnabled;
     }
 
-    private static Rect PickerOverlayRect(float width)
+    private static Rect RootPickerOverlayRect(float width)
     {
-        PickerLayoutMetrics metrics = PickerLayout(width);
+        PickerLayoutMetrics metrics = RootPickerLayout(width);
         Rect anchor = metrics.Anchor;
         float height = metrics.OuterHeight;
         float x = anchor.x;
         float y = metrics.OpenUp ? anchor.y - height - U(2f) : anchor.yMax + U(2f);
-        float windowWidth = windowRect.width;
-        float windowHeight = windowRect.height;
-        if (x + width > windowWidth - U(8f))
-            x = Mathf.Max(U(8f), windowWidth - width - U(8f));
-        y = Mathf.Clamp(y, U(28f), Mathf.Max(U(28f), windowHeight - height - metrics.BottomMargin));
+        float screenWidth = Screen.width;
+        float screenHeight = Screen.height;
+        if (x + width > screenWidth - U(8f))
+            x = Mathf.Max(U(8f), screenWidth - width - U(8f));
+        y = Mathf.Clamp(y, U(8f), Mathf.Max(U(8f), screenHeight - height - metrics.BottomMargin));
 
         return new Rect(x, y, width, height);
     }
@@ -2323,6 +2356,11 @@ internal static class NextCustomerWindow
         return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
     }
 
+    private static Rect RootScreenRectToGuiRect(Rect rect)
+    {
+        return rect;
+    }
+
     private static bool ScreenRectContainsGuiPoint(Rect screenRect, Vector2 guiPoint)
     {
         Vector2 screenPoint = GUIUtility.GUIToScreenPoint(guiPoint);
@@ -2350,9 +2388,9 @@ internal static class NextCustomerWindow
             .ToArray();
     }
 
-    private static PickerLayoutMetrics PickerLayout(float width)
+    private static PickerLayoutMetrics RootPickerLayout(float width)
     {
-        Rect anchor = ScreenRectToGuiRect(targetPickerAnchorScreenRect);
+        Rect anchor = RootScreenRectToGuiRect(targetPickerAnchorScreenRect);
         float rowHeight = PickerRowHeight();
         float padding = U(6f);
         float titleHeight = PickerFontSize() + U(8f);
@@ -2363,8 +2401,8 @@ internal static class NextCustomerWindow
         float desiredViewportHeight = desiredRows * rowHeight;
         float chromeHeight = padding * 2f + titleHeight + titleSpacing;
         float minOuterHeight = chromeHeight + rowHeight;
-        float maxDownHeight = Mathf.Max(minOuterHeight, windowRect.height - (anchor.yMax + U(2f)) - bottomMargin);
-        float maxUpHeight = Mathf.Max(minOuterHeight, anchor.y - U(28f) - U(2f));
+        float maxDownHeight = Mathf.Max(minOuterHeight, Screen.height - (anchor.yMax + U(2f)) - bottomMargin);
+        float maxUpHeight = Mathf.Max(minOuterHeight, anchor.y - U(8f) - U(2f));
         bool openUp = maxDownHeight < desiredViewportHeight + chromeHeight
             && maxUpHeight > maxDownHeight;
         float availableHeight = openUp ? maxUpHeight : maxDownHeight;
@@ -2767,6 +2805,7 @@ internal static class NextCustomerWindow
         ApplyBackground(windowSkin.box, ref boxBackgroundTexture, new Color(0.10f, 0.09f, 0.07f, 0.86f));
         pickerButtonStyle = null;
         windowTitleStyle = null;
+        noWrapLabelStyle = null;
         ColoredButtonStyles.Clear();
         return windowSkin;
     }
@@ -2819,6 +2858,29 @@ internal static class NextCustomerWindow
         windowTitleStyleFontSize = fontSize;
         windowTitleStyleFontKey = fontKey;
         return windowTitleStyle;
+    }
+
+    private static GUIStyle NoWrapLabelStyle()
+    {
+        int fontSize = Mathf.Clamp(uiFontSize?.Value ?? 16, 10, 30);
+        string fontKey = UiFontKey();
+        if (noWrapLabelStyle != null
+            && noWrapLabelStyleFontSize == fontSize
+            && string.Equals(noWrapLabelStyleFontKey, fontKey, StringComparison.Ordinal))
+        {
+            return noWrapLabelStyle;
+        }
+
+        noWrapLabelStyle = new GUIStyle(GUI.skin.label)
+        {
+            font = UiFont(),
+            fontSize = fontSize,
+            clipping = TextClipping.Clip,
+            wordWrap = false
+        };
+        noWrapLabelStyleFontSize = fontSize;
+        noWrapLabelStyleFontKey = fontKey;
+        return noWrapLabelStyle;
     }
 
     private static float WindowTitleHeight()
@@ -2886,7 +2948,42 @@ internal static class NextCustomerWindow
 
     private static float EffectFilterLabelWidth()
     {
-        return 120f;
+        return 155f;
+    }
+
+    private static float RequirementNameColumnWidth()
+    {
+        return 272f;
+    }
+
+    private static float RequirementSelectionButtonWidth()
+    {
+        return 82f;
+    }
+
+    private static float RequirementTargetLabelWidth()
+    {
+        return 80f;
+    }
+
+    private static float RequirementTargetIconColumnWidth()
+    {
+        return 24f;
+    }
+
+    private static float RequirementTargetValueWidth()
+    {
+        return 260f;
+    }
+
+    private static float RequirementTargetPickerButtonWidth()
+    {
+        return 40f;
+    }
+
+    private static float RequirementTargetClearButtonWidth()
+    {
+        return 70f;
     }
 
     private static float RowHeight()
@@ -2921,7 +3018,7 @@ internal static class NextCustomerWindow
 
     private static void EnsureWindowFitsFont()
     {
-        windowRect.width = Mathf.Max(windowRect.width, U(1320f));
+        windowRect.width = Mathf.Max(windowRect.width, U(1720f));
         windowRect.height = Mathf.Max(windowRect.height, U(820f));
         randomRuleWindowRect.width = Mathf.Max(randomRuleWindowRect.width, U(860f));
         randomRuleWindowRect.height = Mathf.Max(randomRuleWindowRect.height, U(680f));
@@ -3205,7 +3302,7 @@ internal static class NextCustomerWindow
             style = GUI.skin.button;
         }
 
-        if (GUILayout.Button(buttonLabel, style, Width(78f)))
+        if (GUILayout.Button(buttonLabel, style, Width(RequirementSelectionButtonWidth())))
             SetRequirementSelection(requirementName, target, resetConflicts: true);
         GUI.enabled = oldEnabled;
         GUI.contentColor = oldContentColor;
@@ -3332,7 +3429,7 @@ internal static class NextCustomerWindow
     private static string EffectFilterField(string label, string value, PickerMode pickerMode)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, Width(EffectFilterLabelWidth()));
+        GUILayout.Label(label, NoWrapLabelStyle(), Width(EffectFilterLabelWidth()));
         string anchorKey = EffectAnchorKey(pickerMode);
         bool open = GUILayout.Button(T("filters.selectEffect"), Width(180f));
         Rect buttonRect = GUILayoutUtility.GetLastRect();
@@ -3741,7 +3838,7 @@ internal static class NextCustomerWindow
     private static string LabeledTextField(string label, string value)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, Width(FilterLabelWidth()));
+        GUILayout.Label(label, NoWrapLabelStyle(), Width(FilterLabelWidth()));
         string result = GUILayout.TextField(value ?? string.Empty);
         GUILayout.EndHorizontal();
         return result;
