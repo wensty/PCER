@@ -63,6 +63,9 @@ internal static class NextCustomerWindow
     private static GUIStyle pickerButtonStyle;
     private static int pickerButtonStyleFontSize;
     private static string pickerButtonStyleFontKey = string.Empty;
+    private static GUIStyle windowTitleStyle;
+    private static int windowTitleStyleFontSize;
+    private static string windowTitleStyleFontKey = string.Empty;
     private static string hoverTooltip = string.Empty;
     private static bool targetPickerOpen;
     private static Rect targetPickerAnchorScreenRect;
@@ -236,7 +239,7 @@ internal static class NextCustomerWindow
                 0x5E71,
                 windowRect,
                 DrawWindow,
-                T("window.title"));
+                string.Empty);
             DrawWindowBorder(windowRect, focused: true);
             if (randomRuleWindowVisible)
             {
@@ -244,7 +247,7 @@ internal static class NextCustomerWindow
                     0x5E72,
                     randomRuleWindowRect,
                     DrawRandomRuleWindow,
-                    T("window.randomRuleTitle"));
+                    string.Empty);
                 DrawWindowBorder(randomRuleWindowRect, focused: true);
             }
             DrawHoverTooltip();
@@ -258,6 +261,7 @@ internal static class NextCustomerWindow
     private static void DrawWindow(int id)
     {
         hoverTooltip = string.Empty;
+        DrawWindowTitle(T("window.title"), windowRect.width);
 
         bool pickerBlocksContent = PickerBlocksCurrentEvent(out Rect pickerRect);
         bool oldEnabled = GUI.enabled;
@@ -273,9 +277,18 @@ internal static class NextCustomerWindow
         GUI.DragWindow(new Rect(0f, 0f, 10000f, WindowTitleHeight()));
     }
 
+    private static void DrawWindowTitle(string title, float width)
+    {
+        if (Event.current.type != EventType.Repaint || string.IsNullOrWhiteSpace(title))
+            return;
+
+        Rect rect = new Rect(U(12f), U(2f), Mathf.Max(1f, width - U(24f)), WindowTitleHeight() - U(4f));
+        GUI.Label(rect, title, WindowTitleStyle());
+    }
+
     private static void DrawFiltersAndCustomers()
     {
-        GUILayout.BeginVertical(Width(430f));
+        GUILayout.BeginVertical(Width(390f));
         GUILayout.Label(T("left.toggle", toggleShortcut.Value));
         GUILayout.Label(T("left.searchTitle"));
         exactInternalNameFilter = LabeledTextField(T("left.exactInternal"), exactInternalNameFilter);
@@ -338,7 +351,7 @@ internal static class NextCustomerWindow
 
         DrawEffectFilters();
         GUILayout.Space(U(6f));
-        detailsScroll = GUILayout.BeginScrollView(detailsScroll, false, true, Height(250f));
+        detailsScroll = GUILayout.BeginScrollView(detailsScroll, false, true, Height(185f));
         DrawSelectedCustomerDetails(selected);
         GUILayout.EndScrollView();
 
@@ -818,6 +831,7 @@ internal static class NextCustomerWindow
 
     private static void DrawRandomRuleWindow(int id)
     {
+        DrawWindowTitle(T("window.randomRuleTitle"), randomRuleWindowRect.width);
         GUILayout.Label(T("randomRule.description"));
         GUILayout.Label(T("randomRule.weightHint"));
 
@@ -1429,7 +1443,7 @@ internal static class NextCustomerWindow
     private static void DrawEffectTokenIconRow(string label, string value)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, Width(95f));
+        GUILayout.Label(label, Width(FilterLabelWidth()));
         Rect rowRect = GUILayoutUtility.GetRect(1f, Mathf.Max(RowHeight(), InlineIconSize() + U(10f)), GUILayout.ExpandWidth(true));
         string[] tokens = EffectFilterTokens(value);
         if (tokens.Length == 0)
@@ -2752,6 +2766,7 @@ internal static class NextCustomerWindow
         ApplyBackground(windowSkin.window, ref windowBackgroundTexture, new Color(0.08f, 0.07f, 0.05f, 0.94f));
         ApplyBackground(windowSkin.box, ref boxBackgroundTexture, new Color(0.10f, 0.09f, 0.07f, 0.86f));
         pickerButtonStyle = null;
+        windowTitleStyle = null;
         ColoredButtonStyles.Clear();
         return windowSkin;
     }
@@ -2777,7 +2792,33 @@ internal static class NextCustomerWindow
             style.padding.right,
             Mathf.Max(style.padding.top, titleHeight),
             style.padding.bottom);
-        style.contentOffset = new Vector2(style.contentOffset.x, Mathf.Min(style.contentOffset.y, -U(1f)));
+        style.contentOffset = Vector2.zero;
+    }
+
+    private static GUIStyle WindowTitleStyle()
+    {
+        int fontSize = Mathf.Clamp(uiFontSize?.Value ?? 16, 10, 30);
+        string fontKey = UiFontKey();
+        if (windowTitleStyle != null
+            && windowTitleStyleFontSize == fontSize
+            && string.Equals(windowTitleStyleFontKey, fontKey, StringComparison.Ordinal))
+        {
+            return windowTitleStyle;
+        }
+
+        windowTitleStyle = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            font = UiFont(),
+            fontSize = fontSize,
+            fontStyle = FontStyle.Bold,
+            clipping = TextClipping.Clip,
+            wordWrap = false
+        };
+        windowTitleStyle.normal.textColor = Color.white;
+        windowTitleStyleFontSize = fontSize;
+        windowTitleStyleFontKey = fontKey;
+        return windowTitleStyle;
     }
 
     private static float WindowTitleHeight()
@@ -2836,6 +2877,16 @@ internal static class NextCustomerWindow
     private static GUILayoutOption Height(float value)
     {
         return GUILayout.Height(U(value));
+    }
+
+    private static float FilterLabelWidth()
+    {
+        return 115f;
+    }
+
+    private static float EffectFilterLabelWidth()
+    {
+        return 120f;
     }
 
     private static float RowHeight()
@@ -3281,7 +3332,7 @@ internal static class NextCustomerWindow
     private static string EffectFilterField(string label, string value, PickerMode pickerMode)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, Width(95f));
+        GUILayout.Label(label, Width(EffectFilterLabelWidth()));
         string anchorKey = EffectAnchorKey(pickerMode);
         bool open = GUILayout.Button(T("filters.selectEffect"), Width(180f));
         Rect buttonRect = GUILayoutUtility.GetLastRect();
@@ -3690,7 +3741,7 @@ internal static class NextCustomerWindow
     private static string LabeledTextField(string label, string value)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, Width(95f));
+        GUILayout.Label(label, Width(FilterLabelWidth()));
         string result = GUILayout.TextField(value ?? string.Empty);
         GUILayout.EndHorizontal();
         return result;
