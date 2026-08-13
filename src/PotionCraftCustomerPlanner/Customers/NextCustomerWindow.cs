@@ -40,7 +40,7 @@ internal static class NextCustomerWindow
     private static ConfigEntry<string> customerSelectedColor;
 
     private static bool visible;
-    private static Rect windowRect = new Rect(60f, 60f, 1720f, 860f);
+    private static Rect windowRect = new Rect(60f, 60f, 1840f, 860f);
     private static bool randomRuleWindowVisible;
     private static Rect randomRuleWindowRect = new Rect(120f, 120f, 860f, 720f);
     private static Vector2 customersScroll;
@@ -92,6 +92,9 @@ internal static class NextCustomerWindow
     private static string mustNotHaveEffectFilter = string.Empty;
     private static int selectedCustomerIndex;
     private static int selectedQuestIndex;
+    private static SelectedTargetMode selectedTargetMode;
+    private static bool showAllMatchingQuests;
+    private static bool hasVisibleCustomerSelection;
     private static List<RegularCustomerOption> cachedCustomers = new List<RegularCustomerOption>();
     private static List<QuestRequirementInQuest> cachedRequirements = new List<QuestRequirementInQuest>();
     private static string searchStatus = "Click Search to populate the customer list.";
@@ -302,6 +305,14 @@ internal static class NextCustomerWindow
         GUI.Label(rect, title, WindowTitleStyle());
     }
 
+    private static void DrawStatusLabel(string text)
+    {
+        string value = text ?? string.Empty;
+        GUILayout.Label(value);
+        if (GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition))
+            hoverTooltip = value;
+    }
+
     private static void DrawFiltersAndCustomers()
     {
         GUILayout.BeginVertical(Width(390f));
@@ -331,27 +342,30 @@ internal static class NextCustomerWindow
         if (GUILayout.Button(T("left.importCurrent"), Height(28f)))
             ImportCurrentCustomer();
         if (GUILayout.Button(T("left.clearResults"), Height(28f)))
-            ClearSearchResults();
+            UnlockSelectedTarget();
         GUILayout.EndHorizontal();
 
         selectedCustomerIndex = Mathf.Clamp(selectedCustomerIndex, 0, Math.Max(0, cachedCustomers.Count - 1));
 
         GUILayout.Space(U(8f));
-        GUILayout.Label(LocalizedStatus(searchStatus));
+        DrawStatusLabel(LocalizedStatus(searchStatus));
         if (!string.IsNullOrWhiteSpace(actionStatus))
-            GUILayout.Label(actionStatus);
+            DrawStatusLabel(actionStatus);
         GUILayout.Label(T("left.cachedCandidates", cachedCustomers.Count));
         customersScroll = GUILayout.BeginScrollView(customersScroll, false, true, GUILayout.ExpandHeight(true));
         for (int i = 0; i < cachedCustomers.Count; i++)
         {
-            bool selected = i == selectedCustomerIndex;
+            bool selected = IsCustomerVisuallySelected(i);
             GUIContent content = new GUIContent(
                 cachedCustomers[i].CachedListLabel ?? cachedCustomers[i].DisplayName,
                 cachedCustomers[i].CachedTooltip ?? string.Empty);
-            if (GUILayout.Button(content, selected ? CustomerSelectedButtonStyle() : GUI.skin.button) && !selected)
+            if (GUILayout.Button(content, selected ? CustomerSelectedButtonStyle() : GUI.skin.button))
             {
                 selectedCustomerIndex = i;
                 selectedQuestIndex = 0;
+                selectedTargetMode = SelectedTargetMode.None;
+                showAllMatchingQuests = false;
+                hasVisibleCustomerSelection = true;
             }
             if (GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition))
                 hoverTooltip = content.tooltip;
@@ -363,7 +377,7 @@ internal static class NextCustomerWindow
     private static void DrawSelectedCustomerAndRequirements()
     {
         GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
-        RegularCustomerOption selected = cachedCustomers.Count == 0 ? null : cachedCustomers[selectedCustomerIndex];
+        RegularCustomerOption selected = cachedCustomers.Count == 0 || !hasVisibleCustomerSelection ? null : cachedCustomers[selectedCustomerIndex];
         NormalizeOptionalSelectionsForCurrentMode();
 
         DrawEffectFilters();
@@ -380,7 +394,7 @@ internal static class NextCustomerWindow
 
     private static void DrawSelectedCustomerPlannerColumn(RegularCustomerOption selected)
     {
-        GUILayout.BeginVertical(Width(680f), GUILayout.ExpandHeight(true));
+        GUILayout.BeginVertical(Width(780f), GUILayout.ExpandHeight(true));
 
         detailsScroll = GUILayout.BeginScrollView(detailsScroll, false, true, GUILayout.ExpandHeight(true));
         DrawSelectedCustomerDetails(selected);
@@ -419,15 +433,48 @@ internal static class NextCustomerWindow
         if (GUILayout.Button(T("details.logWindow"), Height(26f)))
             LogWindowDiagnostics();
 #endif
-        for (int i = 0; i < matchingQuests.Count && i < 8; i++)
+        List<Quest> questsToDraw = QuestsToDrawForSelectionMode(matchingQuests);
+        for (int i = 0; i < questsToDraw.Count; i++)
         {
-            Quest quest = matchingQuests[i];
-            bool selectedQuest = i == selectedQuestIndex;
+            Quest quest = questsToDraw[i];
+            int matchingIndex = matchingQuests.IndexOf(quest);
+            if (matchingIndex < 0)
+                matchingIndex = i;
+            bool selectedQuest = selectedTargetMode != SelectedTargetMode.None && matchingIndex == selectedQuestIndex;
             if (DrawQuestToggle(quest, selectedQuest) && !selectedQuest)
-                selectedQuestIndex = i;
+            {
+                selectedQuestIndex = matchingIndex;
+                selectedTargetMode = SelectedTargetMode.SearchQuest;
+            }
         }
-        if (matchingQuests.Count > 8)
-            GUILayout.Label(T("details.moreQuests", matchingQuests.Count - 8));
+        if (selectedTargetMode != SelectedTargetMode.ImportedCurrent && matchingQuests.Count > 8)
+        {
+            int hiddenCount = matchingQuests.Count - 8;
+            string label = showAllMatchingQuests
+                ? T("details.showFewerQuests")
+                : T("details.showMoreQuests", hiddenCount);
+            if (GUILayout.Button(label, Height(28f)))
+            showAllMatchingQuests = !showAllMatchingQuests;
+        }
+    }
+
+    private static List<Quest> QuestsToDrawForSelectionMode(List<Quest> matchingQuests)
+    {
+        if (matchingQuests == null || matchingQuests.Count == 0)
+            return new List<Quest>();
+        if (selectedTargetMode == SelectedTargetMode.ImportedCurrent)
+        {
+            int index = Mathf.Clamp(selectedQuestIndex, 0, matchingQuests.Count - 1);
+            return new List<Quest> { matchingQuests[index] };
+        }
+        return showAllMatchingQuests
+            ? matchingQuests
+            : matchingQuests.Take(8).ToList();
+    }
+
+    private static bool IsCustomerVisuallySelected(int index)
+    {
+        return hasVisibleCustomerSelection && index == selectedCustomerIndex;
     }
 
     private static void DrawRequirementEditorColumn(RegularCustomerOption selected)
@@ -653,8 +700,11 @@ internal static class NextCustomerWindow
             return;
         }
 
-        bool selectedTargetMode = TryGetSelectedCustomerQuest(out RegularCustomerOption selected, out Quest targetQuest);
-        if (selectedTargetMode)
+        RegularCustomerOption selected = null;
+        Quest targetQuest = null;
+        bool lockedTargetMode = selectedTargetMode != SelectedTargetMode.None
+            && TryGetSelectedCustomerQuest(out selected, out targetQuest);
+        if (lockedTargetMode)
         {
             if (!CanUseSelectedTargetForCurrentRandomPreview(selected, targetQuest, out string selectedTargetReason))
             {
@@ -710,7 +760,7 @@ internal static class NextCustomerWindow
 
         PlannedCustomer plan = CreateCurrentPlan(selected, targetQuest, mandatory, optional);
         actionStatus = NextCustomerDirector.PreviewCurrentCustomer(plan, out reason)
-            ? $"{(selectedTargetMode ? "Random requirements preview" : "Random customer preview")} applied and imported: {CustomerPublicLabel(selected)} / {targetQuest.name} / requirements={generatedMandatory.Count}+{generatedOptional.Count}."
+            ? $"{(lockedTargetMode ? "Random requirements preview" : "Random customer preview")} applied and imported: {CustomerPublicLabel(selected)} / {targetQuest.name} / requirements={generatedMandatory.Count}+{generatedOptional.Count}."
             : $"Randomize preview blocked: {reason}";
     }
 
@@ -718,7 +768,9 @@ internal static class NextCustomerWindow
     {
         selected = null;
         targetQuest = null;
-        if (cachedCustomers.Count == 0)
+        if (selectedTargetMode == SelectedTargetMode.None)
+            return false;
+        if (cachedCustomers.Count == 0 || !hasVisibleCustomerSelection)
             return false;
 
         selectedCustomerIndex = Mathf.Clamp(selectedCustomerIndex, 0, cachedCustomers.Count - 1);
@@ -773,12 +825,9 @@ internal static class NextCustomerWindow
                 CurrentChapter(),
                 CurrentKarma(),
                 strict: true)
-            .Where(candidate => CacheAndMatchFilters(candidate, CurrentChapter()))
             .ToList();
         List<RegularCustomerOption> spawnableCandidates = candidates
-            .Where(candidate => MatchingQuests(
-                candidate.CachedMatchingQuests
-                    ?? RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(candidate, CurrentChapter())).Count > 0)
+            .Where(candidate => RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(candidate, CurrentChapter()).Count > 0)
             .ToList();
         if (spawnableCandidates.Count == 0)
         {
@@ -794,9 +843,7 @@ internal static class NextCustomerWindow
         }
 
         RegularCustomerOption selectedCustomer = spawnableCandidates[selectedIndex];
-        List<Quest> quests = MatchingQuests(
-            selectedCustomer.CachedMatchingQuests
-                ?? RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(selectedCustomer, CurrentChapter()));
+        List<Quest> quests = RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(selectedCustomer, CurrentChapter());
         int questIndex = UnityEngine.Random.Range(0, quests.Count);
         targetQuest = quests[questIndex];
 
@@ -810,6 +857,9 @@ internal static class NextCustomerWindow
         selectedCustomer.CachedListLabel = CustomerListLabel(selectedCustomer);
         selectedCustomer.CachedTooltip = CustomerTooltip(selectedCustomer);
         selectedQuestIndex = questIndex;
+        selectedTargetMode = SelectedTargetMode.ImportedCurrent;
+        showAllMatchingQuests = false;
+        hasVisibleCustomerSelection = true;
         selected = selectedCustomer;
         return true;
     }
@@ -1135,15 +1185,17 @@ internal static class NextCustomerWindow
             ? 0
             : Mathf.Clamp(selectedCustomerIndex, 0, cachedCustomers.Count - 1);
         selectedQuestIndex = 0;
+        selectedTargetMode = SelectedTargetMode.None;
+        showAllMatchingQuests = false;
+        hasVisibleCustomerSelection = false;
         customersScroll = Vector2.zero;
         searchStatus = T("state.searchComplete", PreviewChapter(), PreviewKarma());
     }
 
-    private static void ClearSearchResults()
+    private static void UnlockSelectedTarget()
     {
-        cachedCustomers.Clear();
-        selectedCustomerIndex = 0;
-        customersScroll = Vector2.zero;
+        selectedTargetMode = SelectedTargetMode.None;
+        showAllMatchingQuests = false;
         searchStatus = T("state.resultsCleared");
     }
 
@@ -1172,6 +1224,9 @@ internal static class NextCustomerWindow
         cachedCustomers.Insert(0, current);
         selectedCustomerIndex = 0;
         selectedQuestIndex = currentQuest == null ? 0 : Mathf.Max(0, quests.IndexOf(currentQuest));
+        selectedTargetMode = SelectedTargetMode.ImportedCurrent;
+        showAllMatchingQuests = false;
+        hasVisibleCustomerSelection = true;
         ImportCurrentRequirements(mandatoryRequirements, optionalRequirements);
         customersScroll = Vector2.zero;
         searchStatus = T("state.importedCurrent");
@@ -1300,16 +1355,18 @@ internal static class NextCustomerWindow
 
     private static bool CacheAndMatchFilters(RegularCustomerOption option, int chapter)
     {
-        if (!string.IsNullOrWhiteSpace(exactInternalNameFilter)
-            && !MatchesExactInternalName(option, exactInternalNameFilter))
-        {
-            return false;
-        }
+        string exactInternal = exactInternalNameFilter?.Trim() ?? string.Empty;
+        bool hasExactInternalFilter = !string.IsNullOrWhiteSpace(exactInternal);
+        bool customerInternalMatches = hasExactInternalFilter && MatchesExactCustomerInternalName(option, exactInternal);
 
         if (!ContainsIgnoreCase(option.DisplayName, textFilter))
             return false;
 
         List<Quest> quests = RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(option, chapter);
+        if (hasExactInternalFilter && !customerInternalMatches)
+            quests = quests.Where(quest => MatchesExactQuestInternalName(quest, exactInternal)).ToList();
+        else if (hasExactInternalFilter && customerInternalMatches)
+            quests = quests.ToList();
         option.CachedEnabledQuestCount = quests.Count;
         option.CachedMatchingQuests = MatchingQuests(quests);
         return option.CachedMatchingQuests.Count > 0;
@@ -1331,12 +1388,18 @@ internal static class NextCustomerWindow
         return true;
     }
 
-    private static bool MatchesExactInternalName(RegularCustomerOption option, string filter)
+    private static bool MatchesExactCustomerInternalName(RegularCustomerOption option, string filter)
     {
         string needle = filter.Trim();
         return string.Equals(option.Template?.name, needle, StringComparison.OrdinalIgnoreCase)
             || string.Equals(option.Faction?.name, needle, StringComparison.OrdinalIgnoreCase)
             || string.Equals(option.FactionClass?.name, needle, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesExactQuestInternalName(Quest quest, string filter)
+    {
+        return quest != null
+            && string.Equals(quest.name, filter.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool QuestHasEffect(Quest quest, string filter)
@@ -1388,7 +1451,8 @@ internal static class NextCustomerWindow
 
     private static bool DrawQuestToggle(Quest quest, bool selectedQuest)
     {
-        GUIContent content = new GUIContent(quest?.name ?? "-", EffectsText(quest));
+        string questName = quest?.name ?? "-";
+        GUIContent content = new GUIContent(questName, $"{questName}: {EffectsText(quest)}");
         bool result = GUILayout.Toggle(selectedQuest, GUIContent.none, "Button", Height(46f));
         Rect rect = GUILayoutUtility.GetLastRect();
         if (rect.Contains(Event.current.mousePosition))
@@ -1403,28 +1467,48 @@ internal static class NextCustomerWindow
             return;
 
         Rect contentRect = new Rect(rect.x + U(8f), rect.y + U(4f), rect.width - U(16f), rect.height - U(8f));
+        QuestRowLayout layout = CalculateQuestRowLayout(rect, quest);
+        GUI.Label(layout.NameRect, new GUIContent(quest?.name ?? "-"), NoWrapLabelStyle());
+        if (layout.EffectsWidth > 0f)
+        {
+            DrawEffectMixedRow(
+                quest?.desiredEffects,
+                layout.EffectsRect,
+                includeText: false,
+                alignRight: false,
+                centerAsGroup: false,
+                maxWidth: layout.EffectsWidth);
+        }
+    }
+
+    private static QuestRowLayout CalculateQuestRowLayout(Rect rect, Quest quest)
+    {
+        Rect contentRect = new Rect(rect.x + U(8f), rect.y + U(4f), rect.width - U(16f), rect.height - U(8f));
         string questName = quest?.name ?? "-";
         GUIStyle labelStyle = GUI.skin.label;
-        GUIContent questNameContent = new GUIContent(questName);
-        Vector2 nameSize = labelStyle.CalcSize(questNameContent);
-        float nameWidth = nameSize.x;
+        Vector2 nameSize = labelStyle.CalcSize(new GUIContent(questName));
+        float nameDesiredWidth = nameSize.x + U(18f);
         float gap = U(10f);
-        float effectsWidth = EffectMixedRowWidth(quest?.desiredEffects, includeText: false, contentRect.width - nameWidth - gap);
+        float effectsDesiredWidth = EffectMixedRowWidth(quest?.desiredEffects, includeText: false, U(260f));
+        float effectsWidth = Mathf.Min(effectsDesiredWidth, Mathf.Max(0f, contentRect.width - gap));
+        float nameWidth = Mathf.Min(nameDesiredWidth, contentRect.width - (effectsWidth > 0f ? effectsWidth + gap : 0f));
         float totalWidth = Mathf.Min(contentRect.width, nameWidth + (effectsWidth > 0f ? gap + effectsWidth : 0f));
         float x = contentRect.x + Mathf.Max(0f, contentRect.width - totalWidth) * 0.5f;
         float nameHeight = Mathf.Min(contentRect.height, nameSize.y);
         float nameY = contentRect.y + Mathf.Max(0f, contentRect.height - nameHeight) * 0.5f;
-        GUI.Label(new Rect(x, nameY, nameWidth, nameHeight), questNameContent, labelStyle);
-        if (effectsWidth > 0f)
-        {
-            DrawEffectMixedRow(
-                quest?.desiredEffects,
-                new Rect(x + nameWidth + gap, contentRect.y, effectsWidth, contentRect.height),
-                includeText: false,
-                alignRight: false,
-                centerAsGroup: false,
-                maxWidth: effectsWidth);
-        }
+        Rect nameRect = new Rect(x, nameY, nameWidth, nameHeight);
+        Rect effectsRect = effectsWidth > 0f
+            ? new Rect(x + nameWidth + gap, contentRect.y, effectsWidth, contentRect.height)
+            : Rect.zero;
+        return new QuestRowLayout(
+            contentRect.width,
+            nameDesiredWidth,
+            nameWidth,
+            effectsDesiredWidth,
+            effectsWidth,
+            totalWidth,
+            nameRect,
+            effectsRect);
     }
 
     private static float EffectMixedRowWidth(IEnumerable<PotionEffect> effects, bool includeText, float maxWidth)
@@ -1905,6 +1989,7 @@ internal static class NextCustomerWindow
             + $"titleSpacing={metrics.TitleSpacing:0.###}, bottomMargin={metrics.BottomMargin:0.###}");
         if (targetPickerOpen)
             AddPickerLayoutDiagnostics(lines, U(260f), metrics);
+        AddQuestRowLayoutDiagnostics(lines);
         lines.Add("===== Window diagnostics end =====");
         lines.Add(string.Empty);
         WriteWindowDiagnostics(lines);
@@ -1918,6 +2003,45 @@ internal static class NextCustomerWindow
             + $"openUp={metrics.OpenUp}, availableHeight={metrics.AvailableHeight:0.###}, "
             + $"visibleRows={metrics.VisibleRows}, desiredRows={metrics.DesiredRows}, "
             + $"rows={metrics.Rows}, computedHeight={metrics.OuterHeight:0.###}");
+    }
+
+    private static void AddQuestRowLayoutDiagnostics(List<string> lines)
+    {
+        lines.Add("questRowDiagnostics:");
+        lines.Add(
+            $"  mode={selectedTargetMode}, hasVisibleCustomerSelection={hasVisibleCustomerSelection}, "
+            + $"selectedCustomerIndex={selectedCustomerIndex}, selectedQuestIndex={selectedQuestIndex}, "
+            + $"showAllMatchingQuests={showAllMatchingQuests}, detailsScroll={Vec(detailsScroll)}");
+        if (!hasVisibleCustomerSelection || cachedCustomers.Count == 0)
+        {
+            lines.Add("  no visible selected customer");
+            return;
+        }
+
+        int customerIndex = Mathf.Clamp(selectedCustomerIndex, 0, cachedCustomers.Count - 1);
+        RegularCustomerOption selected = cachedCustomers[customerIndex];
+        List<Quest> quests = RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(selected, PreviewChapter());
+        List<Quest> matchingQuests = selected.CachedMatchingQuests ?? quests;
+        List<Quest> visibleQuests = QuestsToDrawForSelectionMode(matchingQuests);
+        float plannerColumnWidth = U(780f);
+        float scrollBarAllowance = U(24f);
+        float estimatedRowWidth = Mathf.Max(1f, plannerColumnWidth - scrollBarAllowance);
+        Rect rowRect = new Rect(0f, 0f, estimatedRowWidth, RowHeight());
+        lines.Add(
+            $"  customer={selected.Template?.name ?? "-"} / {CustomerPublicLabel(selected)}, "
+            + $"matchingQuests={matchingQuests.Count}, visibleQuests={visibleQuests.Count}, "
+            + $"plannerColumnWidth={plannerColumnWidth:0.###}, estimatedRowWidth={estimatedRowWidth:0.###}");
+        for (int i = 0; i < visibleQuests.Count; i++)
+        {
+            Quest quest = visibleQuests[i];
+            QuestRowLayout layout = CalculateQuestRowLayout(rowRect, quest);
+            lines.Add(
+                $"  [{i}] {quest?.name ?? "-"}: nameDesired={layout.NameDesiredWidth:0.###}, "
+                + $"nameWidth={layout.NameWidth:0.###}, nameClipped={layout.NameClipped}, "
+                + $"effectsDesired={layout.EffectsDesiredWidth:0.###}, effectsWidth={layout.EffectsWidth:0.###}, "
+                + $"totalWidth={layout.TotalWidth:0.###}, contentWidth={layout.ContentWidth:0.###}, "
+                + $"effectCount={(quest?.desiredEffects?.Count(effect => effect != null) ?? 0)}");
+        }
     }
 
     private static void WriteWindowDiagnostics(IReadOnlyList<string> lines)
@@ -3018,7 +3142,7 @@ internal static class NextCustomerWindow
 
     private static void EnsureWindowFitsFont()
     {
-        windowRect.width = Mathf.Max(windowRect.width, U(1720f));
+        windowRect.width = Mathf.Max(windowRect.width, U(1840f));
         windowRect.height = Mathf.Max(windowRect.height, U(820f));
         randomRuleWindowRect.width = Mathf.Max(randomRuleWindowRect.width, U(860f));
         randomRuleWindowRect.height = Mathf.Max(randomRuleWindowRect.height, U(680f));
@@ -4069,6 +4193,39 @@ internal static class NextCustomerWindow
         }
     }
 
+    private readonly struct QuestRowLayout
+    {
+        public float ContentWidth { get; }
+        public float NameDesiredWidth { get; }
+        public float NameWidth { get; }
+        public float EffectsDesiredWidth { get; }
+        public float EffectsWidth { get; }
+        public float TotalWidth { get; }
+        public Rect NameRect { get; }
+        public Rect EffectsRect { get; }
+        public bool NameClipped => NameWidth + 0.5f < NameDesiredWidth;
+
+        public QuestRowLayout(
+            float contentWidth,
+            float nameDesiredWidth,
+            float nameWidth,
+            float effectsDesiredWidth,
+            float effectsWidth,
+            float totalWidth,
+            Rect nameRect,
+            Rect effectsRect)
+        {
+            ContentWidth = contentWidth;
+            NameDesiredWidth = nameDesiredWidth;
+            NameWidth = nameWidth;
+            EffectsDesiredWidth = effectsDesiredWidth;
+            EffectsWidth = effectsWidth;
+            TotalWidth = totalWidth;
+            NameRect = nameRect;
+            EffectsRect = effectsRect;
+        }
+    }
+
     private enum RequirementTargetKind
     {
         None,
@@ -4104,5 +4261,12 @@ internal static class NextCustomerWindow
         RequirementTarget,
         NeedsEffect,
         ExcludesEffect,
+    }
+
+    private enum SelectedTargetMode
+    {
+        None,
+        SearchQuest,
+        ImportedCurrent,
     }
 }

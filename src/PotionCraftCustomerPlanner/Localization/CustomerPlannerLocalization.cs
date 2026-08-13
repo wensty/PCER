@@ -18,7 +18,7 @@ internal static class CustomerPlannerLocalization
 
             ["left.toggle"] = new LocalizedLine("Toggle: {0}", "切换：{0}"),
             ["left.searchTitle"] = new LocalizedLine("Search customer candidates", "搜索顾客候选"),
-            ["left.exactInternal"] = new LocalizedLine("Exact\ninternal", "精确\n内部名"),
+            ["left.exactInternal"] = new LocalizedLine("Internal", "内部名"),
             ["left.name"] = new LocalizedLine("Name", "名称"),
             ["left.strict"] = new LocalizedLine("Strict: only naturally spawnable results", "严格：仅自然可生成结果"),
             ["left.chapterOverride"] = new LocalizedLine("Preview with chapter override", "使用章节预览覆盖"),
@@ -33,7 +33,7 @@ internal static class CustomerPlannerLocalization
                 "微概率阈值={0}；无概率/微概率顾客会标记而非隐藏。"),
             ["left.search"] = new LocalizedLine("Search", "搜索"),
             ["left.importCurrent"] = new LocalizedLine("Import Current", "导入当前"),
-            ["left.clearResults"] = new LocalizedLine("Clear Results", "清空结果"),
+            ["left.clearResults"] = new LocalizedLine("Unlock Target", "取消目标"),
             ["left.cachedCandidates"] = new LocalizedLine("Cached customer candidates: {0}", "已缓存顾客候选：{0}"),
 
             ["details.selectedCustomer"] = new LocalizedLine("Selected customer", "选定顾客"),
@@ -47,6 +47,8 @@ internal static class CustomerPlannerLocalization
             ["details.logSpawn"] = new LocalizedLine("Log spawn diagnostics", "输出生成诊断"),
             ["details.logWindow"] = new LocalizedLine("Log window diagnostics", "输出窗口诊断"),
             ["details.moreQuests"] = new LocalizedLine("... and {0} more matching quests", "……以及另外 {0} 个匹配任务"),
+            ["details.showMoreQuests"] = new LocalizedLine("Show {0} more quests", "展开另外 {0} 个任务"),
+            ["details.showFewerQuests"] = new LocalizedLine("Show fewer quests", "收起任务"),
 
             ["requirements.title"] = new LocalizedLine("Planned extra requirements", "计划额外需求"),
             ["requirements.refresh"] = new LocalizedLine("Refresh List", "刷新列表"),
@@ -133,7 +135,7 @@ internal static class CustomerPlannerLocalization
             ["target.clear"] = new LocalizedLine("Clear", "清除"),
 
             ["state.searchPrompt"] = new LocalizedLine("Click Search to populate the customer list.", "点击搜索填充顾客列表。"),
-            ["state.resultsCleared"] = new LocalizedLine("Results cleared. Click Search to populate the customer list.", "结果已清空。点击搜索填充顾客列表。"),
+            ["state.resultsCleared"] = new LocalizedLine("Selected target unlocked. Random preview will choose a customer and quest naturally.", "已取消选定目标。随机预览将按自然机制选择顾客和任务。"),
             ["state.searchComplete"] = new LocalizedLine("Search complete. Chapter={0}, Karma={1}.", "搜索完成。章节={0}，声望={1}。"),
             ["state.importedCurrent"] = new LocalizedLine("Imported current customer.", "已导入当前顾客。"),
             ["state.importCurrentBlocked"] = new LocalizedLine("Import current blocked: {0}", "导入当前顾客被阻止：{0}"),
