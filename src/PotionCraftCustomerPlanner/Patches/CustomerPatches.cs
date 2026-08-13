@@ -150,12 +150,12 @@ internal static class RejectionDiagnosticsPatches
         RejectionDiagnostics.Write("NpcTrading.GetRewardOnKick", __instance?.npc, includeStack: true);
     }
 
-    private static void NpcTradingUpdateMoodByPotionPrefix(NpcTrading __instance, bool isPotionSuitable)
+    private static void NpcTradingUpdateMoodByPotionPrefix(NpcTrading __instance, bool isCorrectPotion)
     {
         RejectionDiagnostics.Write(
-            $"NpcTrading.UpdateMoodByPotion(isSuitable={isPotionSuitable})",
+            $"NpcTrading.UpdateMoodByPotion(isCorrectPotion={isCorrectPotion})",
             __instance?.npc,
-            includeStack: !isPotionSuitable);
+            includeStack: !isCorrectPotion);
     }
 }
 #endif
