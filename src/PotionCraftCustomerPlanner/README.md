@@ -7,6 +7,105 @@ It can run by itself and does not compile-reference
 `PotionCraftExtraRequirements`. When both mods are installed, it discovers
 extra requirement metadata at runtime.
 
+## User guide
+
+This section is for players using the planner in game. The later sections are
+mostly implementation and compatibility notes for mod authors.
+
+### Opening the planner
+
+- Default toggle key: `F2`.
+- The toggle key can be changed in the BepInEx config file.
+- While the planner window is open, the mod tries to keep the system cursor
+  visible and block most native game input.
+
+### Search, browse, and lock a target
+
+The left column searches customer candidates. Search results are only a browser
+until you explicitly lock a target.
+
+- `Search` fills the customer list using the current filter fields.
+- `Internal` can match a customer/template/faction/class internal name, or an
+  exact quest internal name such as `RandomQuest_00495`.
+- `Name` filters the displayed customer text.
+- The effect filters on the top-right filter quests by required or excluded
+  potion effects.
+- Clicking a customer only browses that customer and shows its quests in the
+  middle column.
+- Clicking a specific quest in the middle column locks the target to that
+  customer + quest.
+- `Import Current` imports the active in-game customer, its active quest, and
+  its current extra requirements. This also locks the target.
+- `Unlock Target` removes the target lock but keeps the browsed customer visible
+  in the middle column. Random preview will again choose a natural customer and
+  quest.
+
+When the target is imported from the current customer, the middle column shows
+only that locked quest. When you browse a searched customer, the middle column
+shows its matching quest list. If more quests are hidden, use the `Show N more
+quests` button to expand the list.
+
+### Random preview
+
+`Random preview` directly modifies the active current customer as a preview.
+
+- If no target is locked, it chooses a customer and quest using the current
+  chapter and karma, following the game's natural repeatable-customer pool.
+- It does not use the current search results as the random pool.
+- It generates extra requirements, imports them into the requirement editor, and
+  applies the preview to the current customer.
+- After a random preview, the generated customer and quest are written back to
+  the panel like an import, so you can inspect or edit the result. If you want
+  to unlock it and randomize freely again, click `Unlock Target`.
+
+### Editing planned requirements
+
+The right column edits extra requirements for the current plan.
+
+- `Refresh List` rebuilds the requirement list after a save/game data is loaded.
+- `Reset Config` clears selected requirements and targets.
+- `None`, `Must`, and `Can` choose whether a requirement is absent, mandatory,
+  or optional.
+- In strict difficulty modes where the game only allows mandatory requirements,
+  `Can` is disabled.
+- Editable target fields accept internal names such as `Ingredient.name` or
+  `PotionBase.name`; the small arrow opens a bounded picker when options are
+  available.
+- Filling an editable target automatically selects that requirement according
+  to the configured target-filled mode.
+- Requirement conflict checks run before applying or scheduling a plan.
+
+### Applying, scheduling, and reverting
+
+The bottom middle action buttons operate on the active in-game customer.
+
+- `Preview selected` applies the currently browsed/locked customer + quest +
+  edited requirements as a preview.
+- `Random preview` generates and applies a random preview as described above.
+- `Revert preview` restores the previous current customer state when possible.
+- `Add scheduled` adds the selected plan to the schedule. The planner first
+  tries to apply it to the current customer; if it cannot, it remains pending
+  and is tried again when a new current customer appears.
+- `Clear scheduled list` removes pending scheduled plans.
+- `Load preset` and `Save preset` are reserved UI entries and are not implemented
+  yet.
+
+The planner avoids modifying merchants and other special non-modifiable NPCs.
+
+### Diagnostics
+
+Debug builds include diagnostic buttons:
+
+- `Log spawn diagnostics` writes customer/quest spawn information to
+  `BepInEx/plugins/PotionCraftCustomerPlanner/SpawnDiagnostics.txt`.
+- `Log window diagnostics` writes UI layout and picker diagnostics to
+  `BepInEx/plugins/PotionCraftCustomerPlanner/WindowDiagnostics.txt`.
+
+These files are useful when a customer appears unexpectedly, a quest cannot be
+found, or a UI row is clipped.
+
+## Mod engineer guide
+
 ## What the planner controls
 
 - Searches repeatable customer candidates from the game's normal
@@ -99,18 +198,21 @@ requirement completion markers follow the modified quest.
 The planner classifies requirement targets in this order:
 
 1. Fixed native wrapper targets
+
    - `QuestRequirementInQuest.ingredient != null` is shown as a read-only
      Ingredient target.
    - `QuestRequirementInQuest.potionBase != null` is shown as a read-only Base
      target.
 
 2. Editable native target types
+
    - `QuestRequirementCertainIngredient` with no wrapper ingredient is editable
      as `Ingredient.name`.
    - `QuestRequirementCertainBase` with no wrapper potion base is editable as
      `PotionBase.name`.
 
 3. External fixed metadata target
+
    - If a loaded requirement mod exposes metadata that the planner can discover,
      that target is shown read-only.
 
@@ -180,12 +282,6 @@ conflicting only with a specific ingredient target, or base/salt/effect
 reachability checks, should still be implemented by the requirement's own
 `UpdateGeneratedRequirement` / `IsCompatibleWithOtherRequirements`; the planner
 also calls those rules during generation validation.
-
-Current useful tag conventions:
-
-- Ingredient category restrictions: include words such as `broad` or
-  `category`.
-- Ingredient-count restrictions: include words such as `highlander` or `count`.
 
 For example, two external requirement mods can agree on a tag such as
 `ingredient-count-limit`; either mod can then expose that tag in
