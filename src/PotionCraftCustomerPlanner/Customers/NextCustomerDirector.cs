@@ -17,6 +17,7 @@ using PotionCraft.QuestSystem;
 using PotionCraft.ScriptableObjects;
 using PotionCraft.ScriptableObjects.Ingredient;
 using PotionCraft.Settings;
+using PotionCraft.Settings.GameDifficultySettings;
 using UnityEngine;
 using PotionScriptable = PotionCraft.ScriptableObjects.Potion.Potion;
 
@@ -29,11 +30,21 @@ internal static class NextCustomerDirector
     private static readonly List<PlannedCustomer> scheduledCustomers = new List<PlannedCustomer>();
     private static readonly HashSet<PlannedCustomer> appliedAppointments = new HashSet<PlannedCustomer>();
     private static NpcMonoBehaviour customerWithAppliedAppointment;
+    private static NpcMonoBehaviour previewCustomerWithAppliedPlan;
+    private static PreviewSnapshot activePreview;
     private static int delayedCurrentApplicationFrames = -1;
     private static readonly System.Reflection.PropertyInfo CurrentNpcProperty =
         AccessTools.Property(typeof(NpcManager), "CurrentNpcMonoBehaviour");
     private static readonly System.Reflection.PropertyInfo InventoryItemProperty =
         AccessTools.Property(typeof(ItemFromInventory), "InventoryItem");
+    private static readonly FieldInfo QuestUseListMandatoryRequirementsField =
+        typeof(Quest).GetField("useListMandatoryRequirements", BindingFlags.Instance | BindingFlags.NonPublic);
+    private static readonly FieldInfo QuestMandatoryRequirementsField =
+        typeof(Quest).GetField("mandatoryRequirements", BindingFlags.Instance | BindingFlags.NonPublic);
+    private static readonly FieldInfo QuestUseListOptionalRequirementsField =
+        typeof(Quest).GetField("useListOptionalRequirements", BindingFlags.Instance | BindingFlags.NonPublic);
+    private static readonly FieldInfo QuestOptionalRequirementsField =
+        typeof(Quest).GetField("optionalRequirements", BindingFlags.Instance | BindingFlags.NonPublic);
 
     public static PlannedCustomer PendingCustomer => scheduledCustomers.FirstOrDefault()
         ?? pendingCustomer;
@@ -43,6 +54,15 @@ internal static class NextCustomerDirector
     public static int PendingScheduledCount => scheduledCustomers.Count(plan => !appliedAppointments.Contains(plan));
 
     public static int AppliedPlaceholderCount => appliedAppointments.Count;
+
+    public static bool HasPreview
+    {
+        get
+        {
+            DropPreviewIfInteracted();
+            return activePreview != null;
+        }
+    }
 
     public static IReadOnlyList<ScheduledPlanSnapshot> ScheduledPlans =>
         scheduledCustomers
@@ -66,14 +86,30 @@ internal static class NextCustomerDirector
         }
 
         int removedAppliedAppointments = RemoveAppliedAppointments();
-        if (TryApplyPlanToCurrentCustomer(plan, allowRebuild: true, out string reason))
+        string reason = string.Empty;
+        if (CanApplyPlanToCurrentCustomer(
+                plan,
+                allowRebuild: true,
+                allowAlreadyAppliedAppointment: false,
+                allowPreviewRebuildAfterDialogueRefresh: false,
+                out _)
+            && ApplyPlanToCurrentCustomer(
+            plan,
+            ApplyPlanMarker.Scheduled,
+            allowRebuild: true,
+            allowAlreadyAppliedAppointment: false,
+            allowPreviewRebuildAfterDialogueRefresh: false,
+            out reason))
         {
+            ClearPreview();
             scheduledCustomers.Add(plan);
             appliedAppointments.Add(plan);
             logger?.LogInfo($"Scheduled plan applied immediately and marked until the next schedule add: {plan.Customer.DisplayName}; quest={plan.TargetQuest?.name ?? "-"}");
             return ScheduleResult.AppliedNow(removedAppliedAppointments);
         }
 
+        if (string.IsNullOrEmpty(reason))
+            reason = "The current customer cannot be modified now.";
         scheduledCustomers.Add(plan);
         logger?.LogInfo($"Scheduled next customer: {plan.Customer.DisplayName}; quest={plan.TargetQuest?.name ?? "-"}; immediateApply={reason}");
         return ScheduleResult.Queued(removedAppliedAppointments, reason);
@@ -85,6 +121,8 @@ internal static class NextCustomerDirector
         appliedAppointments.Clear();
         pendingCustomer = null;
         customerWithAppliedAppointment = null;
+        previewCustomerWithAppliedPlan = null;
+        activePreview = null;
         delayedCurrentApplicationFrames = -1;
     }
 
@@ -94,6 +132,8 @@ internal static class NextCustomerDirector
             && appliedAppointments.Count == 0
             && pendingCustomer == null
             && customerWithAppliedAppointment == null
+            && previewCustomerWithAppliedPlan == null
+            && activePreview == null
             && delayedCurrentApplicationFrames < 0)
         {
             return;
@@ -147,12 +187,226 @@ internal static class NextCustomerDirector
         bool allowRebuild,
         out string reason)
     {
-        return TryApplyPlanToCurrentCustomer(plan, allowRebuild, out reason);
+        return ApplyPlanToCurrentCustomer(
+            plan,
+            ApplyPlanMarker.Scheduled,
+            allowRebuild,
+            allowAlreadyAppliedAppointment: false,
+            allowPreviewRebuildAfterDialogueRefresh: false,
+            out reason);
     }
 
-    private static bool TryApplyPlanToCurrentCustomer(
+    public static bool PreviewCurrentCustomer(PlannedCustomer plan, out string reason)
+    {
+        DropPreviewIfInteracted();
+        if (!CanPreviewCurrentCustomer(plan, out reason))
+            return false;
+
+        NpcMonoBehaviour current = GetCurrentNpc(Managers.Npc);
+        bool previewForCurrent = activePreview?.Npc == current
+            || previewCustomerWithAppliedPlan == current;
+        PreviewSnapshot previousPreview = activePreview;
+        if (!previewForCurrent)
+        {
+            if (!TryCreatePreviewSnapshot(current, out activePreview, out reason))
+                return false;
+        }
+
+        if (ApplyPlanToCurrentCustomer(
+            plan,
+            ApplyPlanMarker.Preview,
+            allowRebuild: true,
+            allowAlreadyAppliedAppointment: previewForCurrent,
+            allowPreviewRebuildAfterDialogueRefresh: previewForCurrent,
+            out reason))
+        {
+            logger?.LogInfo($"Preview applied to current customer: {plan.Customer.DisplayName}; quest={plan.TargetQuest?.name ?? "-"}");
+            return true;
+        }
+
+        if (!previewForCurrent)
+            activePreview = previousPreview;
+        return false;
+    }
+
+    public static bool CanPreviewCurrentCustomer(PlannedCustomer plan, out string reason)
+    {
+        DropPreviewIfInteracted();
+        reason = string.Empty;
+        if (plan == null)
+        {
+            reason = "No plan is selected.";
+            return false;
+        }
+        if (Managers.Npc == null)
+        {
+            reason = "NPC manager is not ready.";
+            return false;
+        }
+
+        NpcMonoBehaviour current = GetCurrentNpc(Managers.Npc);
+        if (current == null)
+        {
+            reason = "There is no current customer.";
+            return false;
+        }
+
+        bool previewForCurrent = activePreview?.Npc == current
+            || previewCustomerWithAppliedPlan == current;
+        if (current == customerWithAppliedAppointment && !previewForCurrent)
+        {
+            reason = "The current customer has already been modified by a scheduled plan.";
+            return false;
+        }
+
+        if (previewForCurrent)
+            return true;
+        if (IsPlanCustomer(plan, current))
+            return true;
+        return CanRebuildCurrentNpcForPlan(current, plan, out reason);
+    }
+
+    public static bool CanEditCurrentCustomer(out string reason)
+    {
+        DropPreviewIfInteracted();
+        reason = string.Empty;
+        if (Managers.Npc == null)
+        {
+            reason = "NPC manager is not ready.";
+            return false;
+        }
+
+        NpcMonoBehaviour current = GetCurrentNpc(Managers.Npc);
+        if (current == null)
+        {
+            reason = "There is no current customer.";
+            return false;
+        }
+        if (current == customerWithAppliedAppointment)
+        {
+            reason = "The current customer has already been modified by a scheduled plan.";
+            return false;
+        }
+        if (IsMerchantNpc(current))
+        {
+            reason = "The current NPC is a trader/merchant.";
+            return false;
+        }
+        if (activePreview?.Npc == current || previewCustomerWithAppliedPlan == current)
+            return true;
+        if (!IsReplaceableRegularCurrentNpc(current))
+        {
+            reason = "The current NPC is not a regular faction/class customer.";
+            return false;
+        }
+        return true;
+    }
+
+    public static bool CanPreviewEditCurrentCustomer(out string reason)
+    {
+        DropPreviewIfInteracted();
+        reason = string.Empty;
+        if (Managers.Npc == null)
+        {
+            reason = "NPC manager is not ready.";
+            return false;
+        }
+
+        NpcMonoBehaviour current = GetCurrentNpc(Managers.Npc);
+        if (current == null)
+        {
+            reason = "There is no current customer.";
+            return false;
+        }
+        if (current == customerWithAppliedAppointment)
+        {
+            reason = "The current customer has already been modified by a scheduled plan.";
+            return false;
+        }
+        if (IsMerchantNpc(current))
+        {
+            reason = "The current NPC is a trader/merchant.";
+            return false;
+        }
+        if (!IsReplaceableRegularCurrentNpc(current))
+        {
+            reason = "The current NPC is not a regular faction/class customer.";
+            return false;
+        }
+        return true;
+    }
+
+    public static bool RevertPreview(out string reason)
+    {
+        reason = string.Empty;
+        if (activePreview == null)
+        {
+            reason = "There is no active preview to revert.";
+            return false;
+        }
+        if (Managers.Npc == null)
+        {
+            reason = "NPC manager is not ready.";
+            return false;
+        }
+
+        NpcMonoBehaviour current = GetCurrentNpc(Managers.Npc);
+        if (current == null)
+        {
+            reason = "There is no current customer.";
+            return false;
+        }
+        if (current != activePreview.Npc)
+        {
+            ClearPreview();
+            reason = "The previewed customer is no longer current.";
+            return false;
+        }
+        if (current == customerWithAppliedAppointment)
+        {
+            ClearPreview();
+            reason = "The preview has already been committed by a scheduled plan.";
+            return false;
+        }
+
+        PreviewSnapshot snapshot = activePreview;
+        PlannedCustomer previousPendingCustomer = pendingCustomer;
+        pendingCustomer = new PlannedCustomer(
+            snapshot.Customer,
+            snapshot.Quest,
+            snapshot.ChapterOnAddToSpawn,
+            strictPlanningMode: false,
+            mandatoryRequirements: new List<PlannedRequirement>(),
+            optionalRequirements: new List<PlannedRequirement>());
+        try
+        {
+            if (!IsPlanCustomer(pendingCustomer, current) && !TryRebuildCurrentNpc(Managers.Npc, current))
+            {
+                reason = "Failed to rebuild the original preview customer.";
+                return false;
+            }
+
+            current.currentQuest = snapshot.Quest;
+            current.mandatoryQuestRequirements = CloneGeneratedRequirements(snapshot.MandatoryRequirements);
+            current.optionalQuestRequirements = CloneGeneratedRequirements(snapshot.OptionalRequirements);
+            current.chapterOnAddToSpawn = snapshot.ChapterOnAddToSpawn;
+            ClearPreview();
+            logger?.LogInfo($"Preview reverted: {snapshot.Customer.DisplayName}; quest={snapshot.Quest?.name ?? "-"}");
+            RefreshDialogueBox();
+            return true;
+        }
+        finally
+        {
+            RestorePendingState(previousPendingCustomer);
+        }
+    }
+
+    private static bool ApplyPlanToCurrentCustomer(
         PlannedCustomer plan,
+        ApplyPlanMarker marker,
         bool allowRebuild,
+        bool allowAlreadyAppliedAppointment,
+        bool allowPreviewRebuildAfterDialogueRefresh,
         out string reason)
     {
         reason = string.Empty;
@@ -177,7 +431,7 @@ internal static class NextCustomerDirector
             RestorePendingState(previousPendingCustomer);
             return false;
         }
-        if (current == customerWithAppliedAppointment)
+        if (current == customerWithAppliedAppointment && !allowAlreadyAppliedAppointment)
         {
             reason = "The current customer has already received a scheduled plan.";
             RestorePendingState(previousPendingCustomer);
@@ -186,7 +440,7 @@ internal static class NextCustomerDirector
 
         if (IsPendingCustomer(current))
         {
-            ApplyPlanToNpc(current);
+            ApplyPlanToNpc(current, marker);
             logger?.LogInfo($"Applied plan to current customer: {plan.Customer.DisplayName}; quest={current.currentQuest?.name ?? "-"}");
             RefreshDialogueBox();
             RestorePendingState(previousPendingCustomer);
@@ -200,7 +454,8 @@ internal static class NextCustomerDirector
             return false;
         }
 
-        if (!CanRebuildCurrentNpcForPlan(current, plan, out reason))
+        if (!CanRebuildCurrentNpcForPlan(current, plan, out reason)
+            && !allowPreviewRebuildAfterDialogueRefresh)
         {
             RestorePendingState(previousPendingCustomer);
             return false;
@@ -213,11 +468,58 @@ internal static class NextCustomerDirector
             return false;
         }
 
-        ApplyPlanToNpc(current);
+        ApplyPlanToNpc(current, marker);
         logger?.LogInfo($"Rebuilt current customer: {plan.Customer.DisplayName}; quest={current.currentQuest?.name ?? "-"}");
         RefreshDialogueBox();
         RestorePendingState(previousPendingCustomer);
         return true;
+    }
+
+    private static bool CanApplyPlanToCurrentCustomer(
+        PlannedCustomer plan,
+        bool allowRebuild,
+        bool allowAlreadyAppliedAppointment,
+        bool allowPreviewRebuildAfterDialogueRefresh,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (plan == null)
+        {
+            reason = "No plan is selected.";
+            return false;
+        }
+        if (Managers.Npc == null)
+        {
+            reason = "NPC manager is not ready.";
+            return false;
+        }
+
+        NpcMonoBehaviour current = GetCurrentNpc(Managers.Npc);
+        if (current == null)
+        {
+            reason = "There is no current customer.";
+            return false;
+        }
+        if (current == customerWithAppliedAppointment && !allowAlreadyAppliedAppointment)
+        {
+            reason = "The current customer has already received a scheduled plan.";
+            return false;
+        }
+        if (IsMerchantNpc(current))
+        {
+            reason = "The current NPC is a trader/merchant.";
+            return false;
+        }
+        if (IsPlanCustomer(plan, current))
+            return true;
+        if (!allowRebuild)
+        {
+            reason = "The current customer does not match the selected plan.";
+            return false;
+        }
+        if (CanRebuildCurrentNpcForPlan(current, plan, out reason))
+            return true;
+        return allowPreviewRebuildAfterDialogueRefresh;
     }
 
     private static void RestorePendingState(PlannedCustomer customer)
@@ -238,6 +540,8 @@ internal static class NextCustomerDirector
 
     public static void Update()
     {
+        DropPreviewIfInteracted();
+
         if (delayedCurrentApplicationFrames < 0)
             return;
         if (delayedCurrentApplicationFrames > 0)
@@ -261,6 +565,7 @@ internal static class NextCustomerDirector
 
         if (current == customerWithAppliedAppointment)
         {
+            ClearPreview();
             logger?.LogInfo($"Scheduled customer reached the counter: {current.currentQuest?.name ?? "-"}");
             customerWithAppliedAppointment = null;
             return true;
@@ -273,7 +578,8 @@ internal static class NextCustomerDirector
         if (naturalPlan != null)
         {
             pendingCustomer = naturalPlan;
-            ApplyPlanToNpc(current);
+            ApplyPlanToNpc(current, ApplyPlanMarker.Scheduled);
+            ClearPreview();
             logger?.LogInfo($"Applied scheduled current customer: {naturalPlan.Customer.DisplayName}; quest={current.currentQuest?.name ?? "-"}");
             if (refreshAfterApply)
                 RefreshDialogueBox();
@@ -289,7 +595,8 @@ internal static class NextCustomerDirector
         if (!TryRebuildCurrentNpc(npcManager, current))
             return false;
 
-        ApplyPlanToNpc(current);
+        ApplyPlanToNpc(current, ApplyPlanMarker.Scheduled);
+        ClearPreview();
         logger?.LogInfo($"Rebuilt current NPC as scheduled customer: {plan.Customer.DisplayName}; quest={current.currentQuest?.name ?? "-"}");
         if (refreshAfterApply)
             RefreshDialogueBox();
@@ -380,6 +687,132 @@ internal static class NextCustomerDirector
             return false;
         }
 
+        return true;
+    }
+
+    public static bool TryGenerateRandomRequirements(
+        Quest targetQuest,
+        int chapter,
+        RandomRequirementRule randomRule,
+        out IReadOnlyList<GeneratedQuestRequirement> mandatoryRequirements,
+        out IReadOnlyList<GeneratedQuestRequirement> optionalRequirements,
+        out string reason)
+    {
+        mandatoryRequirements = new List<GeneratedQuestRequirement>();
+        optionalRequirements = new List<GeneratedQuestRequirement>();
+        reason = string.Empty;
+
+        if (targetQuest == null)
+        {
+            reason = "No target quest selected.";
+            return false;
+        }
+
+        GameDifficultyQuestRequirements settingsAsset = Settings<GameDifficultyQuestRequirements>.Asset;
+        QuestRequirementDifficultySettings settings = settingsAsset?.GetCurrentValue();
+        if (settings == null)
+        {
+            reason = "Quest requirement difficulty settings are not ready.";
+            return false;
+        }
+        if (QuestUseListMandatoryRequirementsField == null
+            || QuestMandatoryRequirementsField == null
+            || QuestUseListOptionalRequirementsField == null
+            || QuestOptionalRequirementsField == null)
+        {
+            reason = "Quest requirement list fields could not be read.";
+            return false;
+        }
+
+        randomRule ??= RandomRequirementRule.Default;
+
+        bool useMandatoryList = QuestUsesRequirementList(targetQuest, isMandatoryRequirements: true);
+        bool useOptionalList = QuestUsesRequirementList(targetQuest, isMandatoryRequirements: false);
+        List<QuestRequirementInQuest> allCandidates =
+            useMandatoryList && useOptionalList
+                ? new List<QuestRequirementInQuest>()
+                : QuestRequirementInQuest.allRequirements
+                    .Where(requirement => requirement?.requirement != null
+                        && chapter >= requirement.requirement.GetChapterToUnlock())
+                    .ToList();
+
+        QuestRequirementsModeConversionType mode = settings.GetModeConversionType();
+        List<GeneratedQuestRequirement> allGenerated = new List<GeneratedQuestRequirement>();
+        List<GeneratedQuestRequirement> nativeMandatory;
+        List<GeneratedQuestRequirement> nativeOptional;
+
+        if (mode == QuestRequirementsModeConversionType.ConvertAllToMandatory)
+        {
+            nativeMandatory = GenerateNativeRequirementSide(
+                targetQuest,
+                settings,
+                randomRule,
+                chapter,
+                isMandatoryRequirements: true,
+                isMandatoryRequirementTexts: true,
+                allCandidates,
+                allGenerated);
+            nativeMandatory.AddRange(GenerateNativeRequirementSide(
+                targetQuest,
+                settings,
+                randomRule,
+                chapter,
+                isMandatoryRequirements: false,
+                isMandatoryRequirementTexts: true,
+                allCandidates,
+                allGenerated));
+            nativeOptional = new List<GeneratedQuestRequirement>();
+        }
+        else if (mode == QuestRequirementsModeConversionType.ConvertAllToOptional)
+        {
+            nativeMandatory = new List<GeneratedQuestRequirement>();
+            nativeOptional = GenerateNativeRequirementSide(
+                targetQuest,
+                settings,
+                randomRule,
+                chapter,
+                isMandatoryRequirements: true,
+                isMandatoryRequirementTexts: false,
+                allCandidates,
+                allGenerated);
+            nativeOptional.AddRange(GenerateNativeRequirementSide(
+                targetQuest,
+                settings,
+                randomRule,
+                chapter,
+                isMandatoryRequirements: false,
+                isMandatoryRequirementTexts: false,
+                allCandidates,
+                allGenerated));
+        }
+        else
+        {
+            nativeMandatory = GenerateNativeRequirementSide(
+                targetQuest,
+                settings,
+                randomRule,
+                chapter,
+                isMandatoryRequirements: true,
+                isMandatoryRequirementTexts: true,
+                allCandidates,
+                allGenerated);
+            nativeOptional = GenerateNativeRequirementSide(
+                targetQuest,
+                settings,
+                randomRule,
+                chapter,
+                isMandatoryRequirements: false,
+                isMandatoryRequirementTexts: false,
+                allCandidates,
+                allGenerated);
+        }
+
+        List<GeneratedQuestRequirement> combined = nativeMandatory.Concat(nativeOptional).ToList();
+        if (!AllGeneratedRequirementsValid(targetQuest, combined, out reason))
+            return false;
+
+        mandatoryRequirements = CloneGeneratedRequirements(nativeMandatory);
+        optionalRequirements = CloneGeneratedRequirements(nativeOptional);
         return true;
     }
 
@@ -571,15 +1004,93 @@ internal static class NextCustomerDirector
         pendingCustomer = null;
     }
 
-    private static void ApplyPlanToNpc(NpcMonoBehaviour npc)
+    private static void ApplyPlanToNpc(NpcMonoBehaviour npc, ApplyPlanMarker marker)
     {
         ApplyTargetQuest(npc);
         ApplySelectedRequirements(npc);
-        customerWithAppliedAppointment = npc;
+        if (marker == ApplyPlanMarker.Scheduled)
+        {
+            customerWithAppliedAppointment = npc;
+            previewCustomerWithAppliedPlan = null;
+        }
+        else if (marker == ApplyPlanMarker.Preview)
+        {
+            previewCustomerWithAppliedPlan = npc;
+        }
+    }
+
+    private static bool TryCreatePreviewSnapshot(
+        NpcMonoBehaviour npc,
+        out PreviewSnapshot snapshot,
+        out string reason)
+    {
+        snapshot = null;
+        if (!RegularCustomerPool.TryCreateOptionFromNpc(npc, out RegularCustomerOption customer, out reason))
+            return false;
+        if (npc.currentQuest == null)
+        {
+            reason = "The current customer has no quest to preview.";
+            return false;
+        }
+
+        snapshot = new PreviewSnapshot(
+            npc,
+            customer,
+            npc.currentQuest,
+            npc.chapterOnAddToSpawn,
+            CloneGeneratedRequirements(npc.mandatoryQuestRequirements ?? new List<GeneratedQuestRequirement>()),
+            CloneGeneratedRequirements(npc.optionalQuestRequirements ?? new List<GeneratedQuestRequirement>()));
+        reason = string.Empty;
+        return true;
+    }
+
+    private static void ClearPreview()
+    {
+        activePreview = null;
+        previewCustomerWithAppliedPlan = null;
+    }
+
+    private static void DropPreviewIfInteracted()
+    {
+        if (activePreview == null)
+            return;
+
+        NpcMonoBehaviour current = GetCurrentNpc(Managers.Npc);
+        if (current != activePreview.Npc)
+        {
+            ClearPreview();
+            return;
+        }
+
+        if (HasPreviewInteractionStarted(current))
+        {
+            logger?.LogInfo($"Preview became interactive and can no longer be reverted: {current.currentQuest?.name ?? "-"}");
+            ClearPreview();
+        }
+    }
+
+    private static bool HasPreviewInteractionStarted(NpcMonoBehaviour npc)
+    {
+        if (npc?.trading == null)
+            return false;
+
+        if (npc.trading.isPotionSold
+            || npc.trading.potionItem != null
+            || npc.trading.IsHaggleCanceled
+            || !npc.trading.IsHagglePerfect
+            || npc.trading.PotionOfferedTimesCount > 0)
+        {
+            return true;
+        }
+
+        DialogueState state = Managers.Dialogue?.State ?? DialogueState.NoDialogue;
+        return state == DialogueState.Haggle || state == DialogueState.Trading;
     }
 
     private static void RefreshDialogueBox()
     {
+        ReturnScalesPotionToInventoryBeforeRefresh();
+
         if (DialogueBox.Instance == null || Managers.Dialogue == null)
         {
             RefreshPotionOnScales();
@@ -597,6 +1108,29 @@ internal static class NextCustomerDirector
             RebuildCurrentDialogueInterface(state);
 
         RefreshPotionOnScales();
+    }
+
+    private static void ReturnScalesPotionToInventoryBeforeRefresh()
+    {
+        Scales scales = Scales.Instance;
+        ScalesCupDisplay display = scales?.rightCupScript?.display;
+        ItemFromInventory item = display?.currentPotionItem;
+        if (item == null)
+            return;
+
+        try
+        {
+            if (item.TryToPutInInventory(
+                    spawnCollectedItemText: false,
+                    spawnCollectedItemTextNearCursor: false))
+            {
+                logger?.LogInfo("Returned potion from scales to inventory before refreshing customer dialogue.");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            logger?.LogWarning($"Failed to return potion from scales before dialogue refresh: {ex.Message}");
+        }
     }
 
     private static void RebuildCurrentDialogueInterface(DialogueState state)
@@ -695,9 +1229,14 @@ internal static class NextCustomerDirector
             reason = "No plan is selected.";
             return false;
         }
-        if (!IsNpcInPreDialogueState(current))
+        if (IsMerchantNpc(current))
         {
-            reason = "The current customer is already in dialogue; rebuilding it would trigger native decline/skip logic.";
+            reason = "The current NPC is a trader/merchant.";
+            return false;
+        }
+        if (!IsReplaceableRegularCurrentNpc(current))
+        {
+            reason = "The current NPC is not a regular faction/class customer.";
             return false;
         }
 
@@ -708,27 +1247,9 @@ internal static class NextCustomerDirector
                 reason = "The current customer matches another scheduled plan.";
                 return false;
             }
-            if (IsMerchantNpc(current))
-            {
-                reason = "The current NPC is a trader/merchant.";
-                return false;
-            }
             return true;
         }
-
-        if (!IsReplaceableRegularCurrentNpc(current))
-        {
-            reason = "The current NPC is not a regular faction/class customer.";
-            return false;
-        }
         return true;
-    }
-
-    private static bool IsNpcInPreDialogueState(NpcMonoBehaviour npc)
-    {
-        if (npc == null)
-            return false;
-        return npc.CurrentState == NpcState.Entering || npc.CurrentState == NpcState.InQueue;
     }
 
     private static bool IsCurrentNpcAnyScheduledCustomer(NpcMonoBehaviour current, PlannedCustomer exceptPlan)
@@ -983,6 +1504,124 @@ internal static class NextCustomerDirector
             generated.intValue1 = plannedRequirement.IntTarget.Value;
         reason = string.Empty;
         return true;
+    }
+
+    private static List<GeneratedQuestRequirement> GenerateNativeRequirementSide(
+        Quest quest,
+        QuestRequirementDifficultySettings settings,
+        RandomRequirementRule randomRule,
+        int chapter,
+        bool isMandatoryRequirements,
+        bool isMandatoryRequirementTexts,
+        List<QuestRequirementInQuest> allCandidates,
+        List<GeneratedQuestRequirement> allGenerated)
+    {
+        List<GeneratedQuestRequirement> result = new List<GeneratedQuestRequirement>();
+        if (QuestUsesRequirementList(quest, isMandatoryRequirements))
+        {
+            foreach (QuestRequirementInQuest requirement in QuestRequirementList(quest, isMandatoryRequirements))
+            {
+                GeneratedQuestRequirement generated = requirement?.GetGeneratedRequirement(
+                    quest,
+                    allGenerated,
+                    isMandatoryRequirementTexts);
+                if (generated == null)
+                    continue;
+
+                result.Add(generated);
+                allGenerated.Add(generated);
+            }
+
+            return result;
+        }
+
+        if (Managers.Tutorial != null && Managers.Tutorial.IsTutorialActive())
+            return result;
+
+        (int firstChancePercent, int secondChancePercent) =
+            randomRule.GetSpawnChances(settings, chapter, isMandatoryRequirements);
+        if (UnityEngine.Random.value >= firstChancePercent / 100f)
+            return result;
+
+        TryAddRandomNativeRequirement(quest, randomRule, allCandidates, allGenerated, result, isMandatoryRequirementTexts);
+        if (UnityEngine.Random.value < secondChancePercent / 100f)
+            TryAddRandomNativeRequirement(quest, randomRule, allCandidates, allGenerated, result, isMandatoryRequirementTexts);
+        return result;
+    }
+
+    private static void TryAddRandomNativeRequirement(
+        Quest quest,
+        RandomRequirementRule randomRule,
+        List<QuestRequirementInQuest> candidates,
+        List<GeneratedQuestRequirement> allGenerated,
+        List<GeneratedQuestRequirement> result,
+        bool isMandatoryRequirementTexts)
+    {
+        int candidateIndex = -2;
+        while (candidateIndex == -2)
+        {
+            candidateIndex = RandomIndexByWeights(
+                candidates
+                    .Select(candidate => randomRule.GetWeight(candidate))
+                    .ToList());
+            if (candidateIndex == -1)
+                return;
+
+            QuestRequirementInQuest candidate = candidates[candidateIndex];
+            GeneratedQuestRequirement generated = candidate.GetGeneratedRequirement(
+                quest,
+                allGenerated,
+                isMandatoryRequirementTexts);
+            candidates.RemoveAt(candidateIndex);
+            if (generated == null)
+            {
+                candidateIndex = -2;
+                continue;
+            }
+
+            result.Add(generated);
+            allGenerated.Add(generated);
+        }
+    }
+
+    private static int RandomIndexByWeights(IReadOnlyList<float> weights)
+    {
+        if (weights == null || weights.Count == 0)
+            return -1;
+
+        float total = weights.Where(weight => weight > 0f).Sum();
+        if (total <= 0f)
+            return -1;
+
+        float roll = UnityEngine.Random.value * total;
+        for (int i = 0; i < weights.Count; i++)
+        {
+            float weight = Mathf.Max(0f, weights[i]);
+            if (weight <= 0f)
+                continue;
+            if (roll < weight)
+                return i;
+            roll -= weight;
+        }
+
+        return weights.Count - 1;
+    }
+
+    private static bool QuestUsesRequirementList(Quest quest, bool isMandatoryRequirements)
+    {
+        FieldInfo field = isMandatoryRequirements
+            ? QuestUseListMandatoryRequirementsField
+            : QuestUseListOptionalRequirementsField;
+        return field != null && field.GetValue(quest) is bool value && value;
+    }
+
+    private static List<QuestRequirementInQuest> QuestRequirementList(Quest quest, bool isMandatoryRequirements)
+    {
+        FieldInfo field = isMandatoryRequirements
+            ? QuestMandatoryRequirementsField
+            : QuestOptionalRequirementsField;
+        return field?.GetValue(quest) as List<QuestRequirementInQuest>
+            ?? new List<QuestRequirementInQuest>();
     }
 
     private static bool PreflightValidateRequirements(
@@ -1284,6 +1923,88 @@ internal static class NextCustomerDirector
                 reason: string.IsNullOrWhiteSpace(reason)
                     ? "The selected requirement group is incompatible."
                     : reason);
+        }
+    }
+
+    private sealed class PreviewSnapshot
+    {
+        public NpcMonoBehaviour Npc { get; }
+        public RegularCustomerOption Customer { get; }
+        public Quest Quest { get; }
+        public int ChapterOnAddToSpawn { get; }
+        public List<GeneratedQuestRequirement> MandatoryRequirements { get; }
+        public List<GeneratedQuestRequirement> OptionalRequirements { get; }
+
+        public PreviewSnapshot(
+            NpcMonoBehaviour npc,
+            RegularCustomerOption customer,
+            Quest quest,
+            int chapterOnAddToSpawn,
+            List<GeneratedQuestRequirement> mandatoryRequirements,
+            List<GeneratedQuestRequirement> optionalRequirements)
+        {
+            Npc = npc;
+            Customer = customer;
+            Quest = quest;
+            ChapterOnAddToSpawn = chapterOnAddToSpawn;
+            MandatoryRequirements = mandatoryRequirements;
+            OptionalRequirements = optionalRequirements;
+        }
+    }
+
+    private enum ApplyPlanMarker
+    {
+        None,
+        Preview,
+        Scheduled,
+    }
+
+    public sealed class RandomRequirementRule
+    {
+        public bool OverrideMandatorySpawnChances { get; set; }
+        public int MandatoryFirstChance { get; set; }
+        public int MandatorySecondChance { get; set; }
+        public bool OverrideOptionalSpawnChances { get; set; }
+        public int OptionalFirstChance { get; set; }
+        public int OptionalSecondChance { get; set; }
+        public Dictionary<string, float> RequirementWeightMultipliers { get; } =
+            new Dictionary<string, float>(System.StringComparer.OrdinalIgnoreCase);
+
+        public static RandomRequirementRule Default => new RandomRequirementRule();
+
+        public (int, int) GetSpawnChances(
+            QuestRequirementDifficultySettings settings,
+            int chapter,
+            bool isMandatoryRequirements)
+        {
+            (int first, int second) native = settings.GetSpawnChances(chapter, isMandatoryRequirements);
+            if (isMandatoryRequirements)
+            {
+                return OverrideMandatorySpawnChances
+                    ? (ClampPercent(MandatoryFirstChance), ClampPercent(MandatorySecondChance))
+                    : native;
+            }
+
+            return OverrideOptionalSpawnChances
+                ? (ClampPercent(OptionalFirstChance), ClampPercent(OptionalSecondChance))
+                : native;
+        }
+
+        public float GetWeight(QuestRequirementInQuest requirement)
+        {
+            QuestRequirement source = requirement?.requirement;
+            if (source == null)
+                return 0f;
+
+            float weight = Mathf.Max(0f, source.spawnChance);
+            if (RequirementWeightMultipliers.TryGetValue(source.name, out float multiplier))
+                weight *= Mathf.Max(0f, multiplier);
+            return weight;
+        }
+
+        private static int ClampPercent(int value)
+        {
+            return Mathf.Clamp(value, 0, 100);
         }
     }
 

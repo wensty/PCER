@@ -31,6 +31,7 @@ internal static class NextCustomerWindow
     private static ConfigEntry<float> tinyFactionSpawnChanceThreshold;
     private static ConfigEntry<int> uiFontSize;
     private static ConfigEntry<int> pickerFontSize;
+    private static ConfigEntry<string> uiFontNames;
     private static ConfigEntry<bool> blockGameInputWhenOpen;
     private static ConfigEntry<TargetFilledSelectionMode> targetFilledSelection;
     private static ConfigEntry<string> noneButtonColor;
@@ -40,12 +41,18 @@ internal static class NextCustomerWindow
 
     private static bool visible;
     private static Rect windowRect = new Rect(60f, 60f, 1320f, 860f);
+    private static bool randomRuleWindowVisible;
+    private static Rect randomRuleWindowRect = new Rect(120f, 120f, 860f, 720f);
     private static Vector2 customersScroll;
     private static Vector2 detailsScroll;
     private static Vector2 requirementsScroll;
     private static Vector2 targetPickerScroll;
+    private static Vector2 randomRuleScroll;
     private static GUISkin windowSkin;
     private static int windowSkinFontSize;
+    private static string windowSkinFontKey = string.Empty;
+    private static Font windowFont;
+    private static string windowFontKey = string.Empty;
     private static Texture2D windowBackgroundTexture;
     private static Texture2D boxBackgroundTexture;
     private static Texture2D borderTexture;
@@ -55,6 +62,7 @@ internal static class NextCustomerWindow
         new Dictionary<string, GUIStyle>(StringComparer.Ordinal);
     private static GUIStyle pickerButtonStyle;
     private static int pickerButtonStyleFontSize;
+    private static string pickerButtonStyleFontKey = string.Empty;
     private static string hoverTooltip = string.Empty;
     private static bool targetPickerOpen;
     private static Rect targetPickerAnchorScreenRect;
@@ -99,6 +107,10 @@ internal static class NextCustomerWindow
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, bool> IngredientCompatibilityCache =
         new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    private static readonly NextCustomerDirector.RandomRequirementRule RandomRequirementRule =
+        new NextCustomerDirector.RandomRequirementRule();
+    private static readonly Dictionary<string, string> RandomRequirementWeightTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     public static bool ShouldBlockGameInput => visible && (blockGameInputWhenOpen?.Value ?? true);
 
@@ -156,6 +168,11 @@ internal static class NextCustomerWindow
             "PickerFontSize",
             16,
             "Font size used by bounded dropdown/picker rows.");
+        uiFontNames = config.Bind(
+            "Next Customer Window",
+            "UIFontNames",
+            "Microsoft YaHei, Arial",
+            "Comma-separated OS font names used by the IMGUI window. The first installed font is used; include a CJK font for Chinese.");
         blockGameInputWhenOpen = config.Bind(
             "Next Customer Window",
             "BlockGameInputWhenOpen",
@@ -219,8 +236,17 @@ internal static class NextCustomerWindow
                 0x5E71,
                 windowRect,
                 DrawWindow,
-                "Potion Craft Customer Planner - Regular Customer Planner");
+                T("window.title"));
             DrawWindowBorder(windowRect, focused: true);
+            if (randomRuleWindowVisible)
+            {
+                randomRuleWindowRect = GUILayout.Window(
+                    0x5E72,
+                    randomRuleWindowRect,
+                    DrawRandomRuleWindow,
+                    T("window.randomRuleTitle"));
+                DrawWindowBorder(randomRuleWindowRect, focused: true);
+            }
             DrawHoverTooltip();
         }
         finally
@@ -244,48 +270,48 @@ internal static class NextCustomerWindow
         GUI.enabled = oldEnabled;
 
         DrawPickerOverlay(pickerRect);
-        GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f));
+        GUI.DragWindow(new Rect(0f, 0f, 10000f, WindowTitleHeight()));
     }
 
     private static void DrawFiltersAndCustomers()
     {
         GUILayout.BeginVertical(Width(430f));
-        GUILayout.Label($"Toggle: {toggleShortcut.Value}");
-        GUILayout.Label("Search customer candidates");
-        exactInternalNameFilter = LabeledTextField("Exact internal", exactInternalNameFilter);
-        textFilter = LabeledTextField("Name", textFilter);
-        strictPlanningMode.Value = GUILayout.Toggle(strictPlanningMode.Value, "Strict: only naturally spawnable results");
+        GUILayout.Label(T("left.toggle", toggleShortcut.Value));
+        GUILayout.Label(T("left.searchTitle"));
+        exactInternalNameFilter = LabeledTextField(T("left.exactInternal"), exactInternalNameFilter);
+        textFilter = LabeledTextField(T("left.name"), textFilter);
+        strictPlanningMode.Value = GUILayout.Toggle(strictPlanningMode.Value, T("left.strict"));
         bool oldEnabled = GUI.enabled;
         GUI.enabled = oldEnabled && !StrictPlanningMode();
-        useChapterOverride.Value = GUILayout.Toggle(useChapterOverride.Value, "Preview with chapter override");
+        useChapterOverride.Value = GUILayout.Toggle(useChapterOverride.Value, T("left.chapterOverride"));
         if (useChapterOverride.Value)
-            previewChapter.Value = LabeledIntField("Chapter", previewChapter.Value, 1, 999);
-        useKarmaOverride.Value = GUILayout.Toggle(useKarmaOverride.Value, "Preview with karma override");
+            previewChapter.Value = LabeledIntField(T("left.chapter"), previewChapter.Value, 1, 999);
+        useKarmaOverride.Value = GUILayout.Toggle(useKarmaOverride.Value, T("left.karmaOverride"));
         if (useKarmaOverride.Value)
-            previewKarma.Value = LabeledIntField("Karma", previewKarma.Value, -100, 100);
+            previewKarma.Value = LabeledIntField(T("left.karma"), previewKarma.Value, -100, 100);
         GUI.enabled = oldEnabled;
         if (StrictPlanningMode())
         {
-            GUILayout.Label($"Strict uses current chapter={CurrentChapter()}, karma={CurrentKarma()}.");
-            GUILayout.Label($"Tiny threshold={tinyFactionSpawnChanceThreshold.Value:0.#########}; no-chance/tiny customers are marked, not hidden.");
+            GUILayout.Label(T("left.strictUses", CurrentChapter(), CurrentKarma()));
+            GUILayout.Label(T("left.tinyThreshold", tinyFactionSpawnChanceThreshold.Value.ToString("0.#########")));
         }
 
         GUILayout.BeginHorizontal();
-        if (GUILayout.Button("Search", Height(28f)))
+        if (GUILayout.Button(T("left.search"), Height(28f)))
             RunSearch();
-        if (GUILayout.Button("Import Current", Height(28f)))
+        if (GUILayout.Button(T("left.importCurrent"), Height(28f)))
             ImportCurrentCustomer();
-        if (GUILayout.Button("Clear Results", Height(28f)))
+        if (GUILayout.Button(T("left.clearResults"), Height(28f)))
             ClearSearchResults();
         GUILayout.EndHorizontal();
 
         selectedCustomerIndex = Mathf.Clamp(selectedCustomerIndex, 0, Math.Max(0, cachedCustomers.Count - 1));
 
         GUILayout.Space(U(8f));
-        GUILayout.Label(searchStatus);
+        GUILayout.Label(LocalizedStatus(searchStatus));
         if (!string.IsNullOrWhiteSpace(actionStatus))
             GUILayout.Label(actionStatus);
-        GUILayout.Label($"Cached customer candidates: {cachedCustomers.Count}");
+        GUILayout.Label(T("left.cachedCandidates", cachedCustomers.Count));
         customersScroll = GUILayout.BeginScrollView(customersScroll, false, true, GUILayout.ExpandHeight(true));
         for (int i = 0; i < cachedCustomers.Count; i++)
         {
@@ -323,10 +349,10 @@ internal static class NextCustomerWindow
 
     private static void DrawSelectedCustomerDetails(RegularCustomerOption selected)
     {
-        GUILayout.Label("Selected customer");
+        GUILayout.Label(T("details.selectedCustomer"));
         if (selected == null)
         {
-            GUILayout.Label("No matching customer.");
+            GUILayout.Label(T("details.noCustomer"));
             return;
         }
 
@@ -336,16 +362,16 @@ internal static class NextCustomerWindow
         selectedQuestIndex = Mathf.Clamp(selectedQuestIndex, 0, Math.Max(0, matchingQuests.Count - 1));
         Quest targetQuest = SelectedQuest(selected);
         GUILayout.Label(selected.DisplayName);
-        GUILayout.Label($"Source: {selected.Source}");
-        GUILayout.Label($"Actual chapter: {CurrentChapter()}, Preview chapter: {chapter}");
-        GUILayout.Label($"Actual karma: {CurrentKarma()}, Preview karma: {PreviewKarma()}");
-        GUILayout.Label($"Unlock chapter: {selected.Template.unlockAtChapter}");
-        GUILayout.Label($"Matching quests: {matchingQuests.Count} / Enabled quests: {quests.Count}");
-        GUILayout.Label($"Target quest: {targetQuest?.name ?? "-"}");
+        GUILayout.Label(T("details.source", selected.Source));
+        GUILayout.Label(T("details.chapter", CurrentChapter(), chapter));
+        GUILayout.Label(T("details.karma", CurrentKarma(), PreviewKarma()));
+        GUILayout.Label(T("details.unlockChapter", selected.Template.unlockAtChapter));
+        GUILayout.Label(T("details.questCounts", matchingQuests.Count, quests.Count));
+        GUILayout.Label(T("details.targetQuest", targetQuest?.name ?? "-"));
 #if DEBUG
-        if (GUILayout.Button("Log spawn diagnostics", Height(26f)))
+        if (GUILayout.Button(T("details.logSpawn"), Height(26f)))
             LogSpawnDiagnostics(selected, targetQuest, matchingQuests);
-        if (GUILayout.Button("Log window diagnostics", Height(26f)))
+        if (GUILayout.Button(T("details.logWindow"), Height(26f)))
             LogWindowDiagnostics();
 #endif
         for (int i = 0; i < matchingQuests.Count && i < 8; i++)
@@ -356,7 +382,7 @@ internal static class NextCustomerWindow
                 selectedQuestIndex = i;
         }
         if (matchingQuests.Count > 8)
-            GUILayout.Label($"... and {matchingQuests.Count - 8} more matching quests");
+            GUILayout.Label(T("details.moreQuests", matchingQuests.Count - 8));
     }
 
     private static void DrawRequirementSelector(RegularCustomerOption selected)
@@ -364,25 +390,30 @@ internal static class NextCustomerWindow
         NormalizeOptionalSelectionsForCurrentMode();
 
         GUILayout.BeginHorizontal();
-        GUILayout.Label("Planned extra requirements");
-        if (GUILayout.Button("Refresh List", Width(130f)))
+        GUILayout.Label(T("requirements.title"));
+        if (GUILayout.Button(T("requirements.refresh"), Width(130f)))
             RefreshRequirementCache();
-        if (GUILayout.Button("Reset Config", Width(130f)))
+        if (GUILayout.Button(T("requirements.reset"), Width(130f)))
             ResetRequirementConfig();
         GUILayout.EndHorizontal();
         if (cachedRequirements.Count == 0)
-            GUILayout.Label("No requirement cache yet. Click Refresh List after a save is loaded.");
+            GUILayout.Label(T("requirements.noCache"));
         else
-            GUILayout.Label("Targets can be typed manually or chosen with Select. Max uses a number.");
+            GUILayout.Label(T("requirements.targetHint"));
         RequirementLimitInfo limits = CurrentRequirementLimits();
         if (limits.MaxOptional == 0)
-            GUILayout.Label("Current strict difficulty mode allows only mandatory requirements; Can is disabled.");
+            GUILayout.Label(T("requirements.onlyMandatory"));
         if (limits.MaxMandatory == 0)
-            GUILayout.Label("Current strict difficulty mode allows only optional requirements; Must is disabled.");
+            GUILayout.Label(T("requirements.onlyOptional"));
         GUILayout.Label(
-            $"Selected requirements: Must {SelectedRequirementCount(RequirementSelection.Mandatory)} allowed {limits.MandatoryRangeText}, "
-            + $"Can {SelectedRequirementCount(RequirementSelection.Optional)} allowed {limits.OptionalRangeText}, "
-            + $"Total {SelectedRequirementTotal()} allowed {limits.TotalRangeText}");
+            T(
+                "requirements.selectedCounts",
+                SelectedRequirementCount(RequirementSelection.Mandatory),
+                limits.MandatoryRangeText,
+                SelectedRequirementCount(RequirementSelection.Optional),
+                limits.OptionalRangeText,
+                SelectedRequirementTotal(),
+                limits.TotalRangeText));
 
         Quest targetQuest = SelectedQuest(selected);
         requirementsScroll = GUILayout.BeginScrollView(requirementsScroll, false, true, GUILayout.ExpandHeight(true));
@@ -406,9 +437,9 @@ internal static class NextCustomerWindow
             GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.BeginHorizontal();
             GUILayout.Label(name, Width(300f));
-            DrawRequirementSelectionButton(name, state, RequirementSelection.None, "None", limits);
-            DrawRequirementSelectionButton(name, state, RequirementSelection.Mandatory, "Must", limits);
-            DrawRequirementSelectionButton(name, state, RequirementSelection.Optional, "Can", limits);
+            DrawRequirementSelectionButton(name, state, RequirementSelection.None, T("requirements.none"), limits);
+            DrawRequirementSelectionButton(name, state, RequirementSelection.Mandatory, T("requirements.must"), limits);
+            DrawRequirementSelectionButton(name, state, RequirementSelection.Optional, T("requirements.can"), limits);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             DrawRequirementTargetField(requirement, name, targetQuest);
@@ -423,8 +454,8 @@ internal static class NextCustomerWindow
             && selected != null
             && NextCustomerDirector.IsRequirementGroupAllowed(
                 selected,
-                PreviewChapter(),
-                PreviewKarma(),
+                CurrentChapter(),
+                CurrentKarma(),
                 StrictPlanningMode(),
                 targetQuest,
                 mandatory,
@@ -432,25 +463,58 @@ internal static class NextCustomerWindow
                 out blockReason);
 
         GUILayout.Space(U(6f));
-        GUILayout.Label(valid ? "Requirement group: allowed" : $"Requirement group: blocked - {blockReason}");
+        GUILayout.Label(valid ? T("requirements.groupAllowed") : T("requirements.groupBlocked", blockReason));
+        DrawPlannerActionButtons(selected, targetQuest, mandatory, optional, valid);
+
+        DrawScheduledQueueSummary();
+    }
+
+    private static void DrawPlannerActionButtons(
+        RegularCustomerOption selected,
+        Quest targetQuest,
+        IReadOnlyList<PlannedRequirement> mandatory,
+        IReadOnlyList<PlannedRequirement> optional,
+        bool valid)
+    {
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.Label(T("actions.title"));
+
         GUILayout.BeginHorizontal();
         GUI.enabled = selected != null && valid;
-        if (GUILayout.Button("Add scheduled customer", Height(28f)))
+        if (GUILayout.Button(T("actions.previewSelected"), Height(28f)))
+            PreviewCurrentCustomer(selected, targetQuest, mandatory, optional);
+        GUI.enabled = true;
+        if (GUILayout.Button(T("actions.randomPreview"), Height(28f)))
+            RandomizePreviewCustomer();
+        if (GUILayout.Button(T("actions.editRandomRule"), Height(28f)))
+            ToggleRandomRuleWindow();
+        GUI.enabled = NextCustomerDirector.HasPreview;
+        if (GUILayout.Button(T("actions.revertPreview"), Height(28f)))
+            RevertPreviewCustomer();
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal();
+        GUI.enabled = selected != null && valid;
+        if (GUILayout.Button(T("actions.addScheduled"), Height(28f)))
         {
             NextCustomerDirector.ScheduleResult result =
                 NextCustomerDirector.Schedule(CreatePlan(selected, targetQuest, mandatory, optional));
             actionStatus = ScheduleResultText(result);
         }
         GUI.enabled = NextCustomerDirector.ScheduledCount > 0;
-        if (GUILayout.Button("Clear scheduled list", Height(28f)))
+        if (GUILayout.Button(T("actions.clearScheduled"), Height(28f)))
         {
             NextCustomerDirector.Clear();
-            actionStatus = "Cleared scheduled plan.";
+            actionStatus = T("state.clearedScheduled");
         }
+        GUI.enabled = false;
+        GUILayout.Button(T("actions.loadPreset"), Height(28f));
+        GUILayout.Button(T("actions.savePreset"), Height(28f));
         GUI.enabled = true;
         GUILayout.EndHorizontal();
 
-        DrawScheduledQueueSummary();
+        GUILayout.EndVertical();
     }
 
     private static void DrawScheduledQueueSummary()
@@ -461,24 +525,29 @@ internal static class NextCustomerWindow
 
         GUILayout.Space(U(4f));
         GUILayout.Label(
-            $"Scheduled queue: pending {NextCustomerDirector.PendingScheduledCount}, "
-            + $"applied placeholders {NextCustomerDirector.AppliedPlaceholderCount}, "
-            + $"total {NextCustomerDirector.ScheduledCount}");
+            T(
+                "schedule.summary",
+                NextCustomerDirector.PendingScheduledCount,
+                NextCustomerDirector.AppliedPlaceholderCount,
+                NextCustomerDirector.ScheduledCount));
 
         foreach (NextCustomerDirector.ScheduledPlanSnapshot snapshot in plans.Take(5))
         {
             PlannedCustomer plan = snapshot.Plan;
             if (plan == null)
                 continue;
-            string state = snapshot.Applied ? "applied/current" : "pending";
+            string state = snapshot.Applied ? T("schedule.stateApplied") : T("schedule.statePending");
             GUILayout.Label(
-                $"{snapshot.Index + 1}. [{state}] "
-                + $"{CustomerPublicLabel(plan.Customer)} / "
-                + $"{plan.TargetQuest?.name ?? "-"}");
+                T(
+                    "schedule.entry",
+                    snapshot.Index + 1,
+                    state,
+                    CustomerPublicLabel(plan.Customer),
+                    plan.TargetQuest?.name ?? "-"));
         }
 
         if (plans.Count > 5)
-            GUILayout.Label($"... and {plans.Count - 5} more scheduled entries");
+            GUILayout.Label(T("schedule.more", plans.Count - 5));
     }
 
     private static string ScheduleResultText(NextCustomerDirector.ScheduleResult result)
@@ -496,12 +565,407 @@ internal static class NextCustomerWindow
         return "Added to scheduled list." + reason + pruned;
     }
 
+    private static void PreviewCurrentCustomer(
+        RegularCustomerOption selected,
+        Quest targetQuest,
+        IReadOnlyList<PlannedRequirement> mandatory,
+        IReadOnlyList<PlannedRequirement> optional)
+    {
+        if (selected == null || targetQuest == null)
+        {
+            actionStatus = "Preview blocked: select a customer and quest first.";
+            return;
+        }
+        if (!IsSelectedRequirementCountAllowed(targetQuest, out string countReason)
+            || !NextCustomerDirector.IsRequirementGroupAllowed(
+                selected,
+                CurrentChapter(),
+                CurrentKarma(),
+                StrictPlanningMode(),
+                targetQuest,
+                mandatory,
+                optional,
+                out countReason))
+        {
+            actionStatus = $"Preview blocked: {countReason}";
+            return;
+        }
+
+        PlannedCustomer plan = CreatePlan(selected, targetQuest, mandatory, optional);
+        actionStatus = NextCustomerDirector.PreviewCurrentCustomer(plan, out string reason)
+            ? $"Preview applied: {CustomerPublicLabel(selected)} / {targetQuest.name}."
+            : $"Preview blocked: {reason}";
+    }
+
+    private static void RandomizePreviewCustomer()
+    {
+        if (!NextCustomerDirector.CanPreviewEditCurrentCustomer(out string reason))
+        {
+            actionStatus = $"Randomize preview blocked: {reason}";
+            return;
+        }
+
+        bool selectedTargetMode = TryGetSelectedCustomerQuest(out RegularCustomerOption selected, out Quest targetQuest);
+        if (selectedTargetMode)
+        {
+            if (!CanUseSelectedTargetForCurrentRandomPreview(selected, targetQuest, out string selectedTargetReason))
+            {
+                actionStatus = $"Randomize preview blocked: {selectedTargetReason}";
+                return;
+            }
+        }
+        else if (!TrySelectRandomCustomerAndQuest(out selected, out targetQuest, out string randomSelectionReason))
+        {
+            actionStatus = $"Randomize preview blocked: {randomSelectionReason}";
+            return;
+        }
+
+        PlannedCustomer basePlan = CreateCurrentPlan(
+            selected,
+            targetQuest,
+            new List<PlannedRequirement>(),
+            new List<PlannedRequirement>());
+        if (!NextCustomerDirector.CanPreviewCurrentCustomer(basePlan, out reason))
+        {
+            actionStatus = $"Randomize preview blocked: {reason}";
+            return;
+        }
+        if (!NextCustomerDirector.TryGenerateRandomRequirements(
+                targetQuest,
+                CurrentChapter(),
+                RandomRequirementRule,
+                out IReadOnlyList<GeneratedQuestRequirement> generatedMandatory,
+                out IReadOnlyList<GeneratedQuestRequirement> generatedOptional,
+                out reason))
+        {
+            actionStatus = $"Randomize preview blocked: {reason}";
+            return;
+        }
+
+        ImportCurrentRequirements(generatedMandatory, generatedOptional);
+        List<PlannedRequirement> mandatory = SelectedRequirements(RequirementSelection.Mandatory);
+        List<PlannedRequirement> optional = SelectedRequirements(RequirementSelection.Optional);
+        if (!IsSelectedRequirementCountAllowed(targetQuest, out string countReason)
+            || !NextCustomerDirector.IsRequirementGroupAllowed(
+                selected,
+                CurrentChapter(),
+                CurrentKarma(),
+                strict: true,
+                targetQuest,
+                mandatory,
+                optional,
+                out countReason))
+        {
+            actionStatus = $"Randomize preview blocked after import: {countReason}";
+            return;
+        }
+
+        PlannedCustomer plan = CreateCurrentPlan(selected, targetQuest, mandatory, optional);
+        actionStatus = NextCustomerDirector.PreviewCurrentCustomer(plan, out reason)
+            ? $"{(selectedTargetMode ? "Random requirements preview" : "Random customer preview")} applied and imported: {CustomerPublicLabel(selected)} / {targetQuest.name} / requirements={generatedMandatory.Count}+{generatedOptional.Count}."
+            : $"Randomize preview blocked: {reason}";
+    }
+
+    private static bool TryGetSelectedCustomerQuest(out RegularCustomerOption selected, out Quest targetQuest)
+    {
+        selected = null;
+        targetQuest = null;
+        if (cachedCustomers.Count == 0)
+            return false;
+
+        selectedCustomerIndex = Mathf.Clamp(selectedCustomerIndex, 0, cachedCustomers.Count - 1);
+        selected = cachedCustomers[selectedCustomerIndex];
+        targetQuest = SelectedQuest(selected);
+        return selected != null && targetQuest != null;
+    }
+
+    private static bool CanUseSelectedTargetForCurrentRandomPreview(
+        RegularCustomerOption selected,
+        Quest targetQuest,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (selected == null || targetQuest == null)
+        {
+            reason = "No selected customer quest is available.";
+            return false;
+        }
+
+        int chapter = CurrentChapter();
+        int karma = CurrentKarma();
+        List<RegularCustomerOption> currentCandidates = RegularCustomerPool
+            .GetAvailableRegularCustomers(chapter, karma, strict: true)
+            .ToList();
+        if (!currentCandidates.Any(candidate => IsSameCustomerOption(candidate, selected)))
+        {
+            reason = $"The selected customer is not available for the current chapter={chapter}, karma={karma}.";
+            return false;
+        }
+
+        List<Quest> currentQuests = RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(selected, chapter);
+        if (!currentQuests.Any(quest => IsSameQuest(quest, targetQuest)))
+        {
+            reason = $"The selected quest is not spawnable for the selected customer at current chapter={chapter}.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TrySelectRandomCustomerAndQuest(
+        out RegularCustomerOption selected,
+        out Quest targetQuest,
+        out string reason)
+    {
+        selected = null;
+        targetQuest = null;
+        reason = string.Empty;
+
+        List<RegularCustomerOption> candidates = RegularCustomerPool.GetAvailableRegularCustomers(
+                CurrentChapter(),
+                CurrentKarma(),
+                strict: true)
+            .Where(candidate => CacheAndMatchFilters(candidate, CurrentChapter()))
+            .ToList();
+        List<RegularCustomerOption> spawnableCandidates = candidates
+            .Where(candidate => MatchingQuests(
+                candidate.CachedMatchingQuests
+                    ?? RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(candidate, CurrentChapter())).Count > 0)
+            .ToList();
+        if (spawnableCandidates.Count == 0)
+        {
+            reason = "No random customer candidate with matching quests is available.";
+            return false;
+        }
+
+        int selectedIndex = RandomIndexByWeights(spawnableCandidates.Select(RandomCustomerWeight).ToList());
+        if (selectedIndex < 0)
+        {
+            reason = "No random customer candidate has a positive weight.";
+            return false;
+        }
+
+        RegularCustomerOption selectedCustomer = spawnableCandidates[selectedIndex];
+        List<Quest> quests = MatchingQuests(
+            selectedCustomer.CachedMatchingQuests
+                ?? RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(selectedCustomer, CurrentChapter()));
+        int questIndex = UnityEngine.Random.Range(0, quests.Count);
+        targetQuest = quests[questIndex];
+
+        cachedCustomers.RemoveAll(candidate => IsSameCustomerOption(candidate, selectedCustomer));
+        cachedCustomers.Insert(0, selectedCustomer);
+        selectedCustomerIndex = 0;
+        selectedCustomer.CachedMatchingQuests = quests;
+        selectedCustomer.CachedEnabledQuestCount = RegularCustomerPool
+            .GetSpawnableQuestsForRegularCustomer(selectedCustomer, CurrentChapter())
+            .Count;
+        selectedCustomer.CachedListLabel = CustomerListLabel(selectedCustomer);
+        selectedCustomer.CachedTooltip = CustomerTooltip(selectedCustomer);
+        selectedQuestIndex = questIndex;
+        selected = selectedCustomer;
+        return true;
+    }
+
+    private static void RevertPreviewCustomer()
+    {
+        actionStatus = NextCustomerDirector.RevertPreview(out string reason)
+            ? "Preview reverted."
+            : $"Revert preview blocked: {reason}";
+    }
+
+    private static float RandomCustomerWeight(RegularCustomerOption option)
+    {
+        if (option == null)
+            return 0f;
+        if (option.Source == CustomerCandidateSource.PlotRandomClosenessQuest)
+            return 1f;
+        float factionWeight = Mathf.Max(0f, RegularCustomerPool.GetFactionSpawnChanceAtKarma(option, CurrentKarma()));
+        float classWeight = Mathf.Max(0f, option.ClassInFaction?.spawnChance ?? 0f);
+        float weight = factionWeight * classWeight;
+        return weight > 0f || StrictPlanningMode()
+            ? weight
+            : Mathf.Max(0.0001f, classWeight);
+    }
+
+    private static int RandomIndexByWeights(IReadOnlyList<float> weights)
+    {
+        if (weights == null || weights.Count == 0)
+            return -1;
+        float total = weights.Where(weight => weight > 0f).Sum();
+        if (total <= 0f)
+            return -1;
+
+        float roll = UnityEngine.Random.value * total;
+        for (int i = 0; i < weights.Count; i++)
+        {
+            float weight = Mathf.Max(0f, weights[i]);
+            if (weight <= 0f)
+                continue;
+            if (roll < weight)
+                return i;
+            roll -= weight;
+        }
+
+        return weights.Count - 1;
+    }
+
+    private static void ToggleRandomRuleWindow()
+    {
+        randomRuleWindowVisible = !randomRuleWindowVisible;
+        if (randomRuleWindowVisible)
+            SyncRandomRuleChanceDefaults();
+    }
+
+    private static void DrawRandomRuleWindow(int id)
+    {
+        GUILayout.Label(T("randomRule.description"));
+        GUILayout.Label(T("randomRule.weightHint"));
+
+        SyncRandomRuleChanceDefaults();
+        randomRuleScroll = GUILayout.BeginScrollView(randomRuleScroll, false, true);
+        DrawRandomChanceSection(
+            T("randomRule.mandatoryChances"),
+            isMandatoryRequirements: true,
+            () => RandomRequirementRule.OverrideMandatorySpawnChances,
+            value => RandomRequirementRule.OverrideMandatorySpawnChances = value,
+            value => RandomRequirementRule.MandatoryFirstChance = value,
+            () => RandomRequirementRule.MandatoryFirstChance,
+            value => RandomRequirementRule.MandatorySecondChance = value,
+            () => RandomRequirementRule.MandatorySecondChance);
+        DrawRandomChanceSection(
+            T("randomRule.optionalChances"),
+            isMandatoryRequirements: false,
+            () => RandomRequirementRule.OverrideOptionalSpawnChances,
+            value => RandomRequirementRule.OverrideOptionalSpawnChances = value,
+            value => RandomRequirementRule.OptionalFirstChance = value,
+            () => RandomRequirementRule.OptionalFirstChance,
+            value => RandomRequirementRule.OptionalSecondChance = value,
+            () => RandomRequirementRule.OptionalSecondChance);
+
+        GUILayout.Space(U(8f));
+        DrawRequirementCategoryHeader(T("randomRule.weightMultipliers"));
+        if (cachedRequirements.Count == 0)
+            GUILayout.Label(T("randomRule.noCache"));
+        foreach (QuestRequirementInQuest requirement in cachedRequirements
+            .Where(item => item?.requirement != null)
+            .OrderBy(RequirementCategoryOrder)
+            .ThenBy(RequirementCategoryName)
+            .ThenBy(item => item.requirement.name))
+        {
+            DrawRandomWeightRow(requirement);
+        }
+        GUILayout.EndScrollView();
+
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button(T("randomRule.reset"), Height(28f)))
+            ResetRandomRule();
+        if (GUILayout.Button(T("randomRule.close"), Height(28f)))
+            randomRuleWindowVisible = false;
+        GUILayout.EndHorizontal();
+        GUI.DragWindow(new Rect(0f, 0f, 10000f, WindowTitleHeight()));
+    }
+
+    private static void SyncRandomRuleChanceDefaults()
+    {
+        QuestRequirementDifficultySettings settings =
+            Settings<GameDifficultyQuestRequirements>.Asset?.GetCurrentValue();
+        if (settings == null)
+            return;
+
+        (int mandatoryFirst, int mandatorySecond) =
+            settings.GetSpawnChances(CurrentChapter(), isMandatoryRequirements: true);
+        if (!RandomRequirementRule.OverrideMandatorySpawnChances)
+        {
+            RandomRequirementRule.MandatoryFirstChance = mandatoryFirst;
+            RandomRequirementRule.MandatorySecondChance = mandatorySecond;
+        }
+
+        (int optionalFirst, int optionalSecond) =
+            settings.GetSpawnChances(CurrentChapter(), isMandatoryRequirements: false);
+        if (!RandomRequirementRule.OverrideOptionalSpawnChances)
+        {
+            RandomRequirementRule.OptionalFirstChance = optionalFirst;
+            RandomRequirementRule.OptionalSecondChance = optionalSecond;
+        }
+    }
+
+    private static void DrawRandomChanceSection(
+        string title,
+        bool isMandatoryRequirements,
+        Func<bool> getOverrideChances,
+        Action<bool> setOverrideChances,
+        Action<int> setFirst,
+        Func<int> getFirst,
+        Action<int> setSecond,
+        Func<int> getSecond)
+    {
+        DrawRequirementCategoryHeader(title);
+        QuestRequirementDifficultySettings settings =
+            Settings<GameDifficultyQuestRequirements>.Asset?.GetCurrentValue();
+        (int nativeFirst, int nativeSecond) = settings == null
+            ? (0, 0)
+            : settings.GetSpawnChances(CurrentChapter(), isMandatoryRequirements);
+        bool overrideChances = GUILayout.Toggle(
+            getOverrideChances(),
+            T("randomRule.overrideChances", nativeFirst, nativeSecond));
+        setOverrideChances(overrideChances);
+        bool oldEnabled = GUI.enabled;
+        GUI.enabled = oldEnabled && overrideChances;
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(T("randomRule.firstChance"), Width(220f));
+        setFirst(IntField(getFirst(), 0, 100, Width(90f)));
+        GUILayout.Space(U(20f));
+        GUILayout.Label(T("randomRule.secondChance"), Width(240f));
+        setSecond(IntField(getSecond(), 0, 100, Width(90f)));
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+        GUI.enabled = oldEnabled;
+    }
+
+    private static void DrawRandomWeightRow(QuestRequirementInQuest requirement)
+    {
+        string name = requirement.requirement.name;
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(name, Width(360f));
+        GUILayout.Label(T("randomRule.nativeWeight", requirement.requirement.spawnChance.ToString("0.###")), Width(180f));
+        GUILayout.Label("x", Width(18f));
+        RandomRequirementWeightTexts.TryGetValue(name, out string text);
+        if (string.IsNullOrWhiteSpace(text))
+            text = RandomRequirementRule.RequirementWeightMultipliers.TryGetValue(name, out float multiplier)
+                ? multiplier.ToString("0.###")
+                : "1";
+        string edited = GUILayout.TextField(text, Width(110f));
+        RandomRequirementWeightTexts[name] = edited;
+        if (float.TryParse(edited, out float parsed))
+        {
+            if (Mathf.Approximately(parsed, 1f))
+                RandomRequirementRule.RequirementWeightMultipliers.Remove(name);
+            else
+                RandomRequirementRule.RequirementWeightMultipliers[name] = Mathf.Max(0f, parsed);
+        }
+        if (GUILayout.Button(T("randomRule.resetOne"), Width(90f)))
+        {
+            RandomRequirementRule.RequirementWeightMultipliers.Remove(name);
+            RandomRequirementWeightTexts[name] = "1";
+        }
+        GUILayout.EndHorizontal();
+    }
+
+    private static void ResetRandomRule()
+    {
+        RandomRequirementRule.OverrideMandatorySpawnChances = false;
+        RandomRequirementRule.OverrideOptionalSpawnChances = false;
+        RandomRequirementRule.RequirementWeightMultipliers.Clear();
+        RandomRequirementWeightTexts.Clear();
+        SyncRandomRuleChanceDefaults();
+    }
+
     private static void DrawRequirementCategoryHeader(string category)
     {
         GUILayout.Space(U(6f));
         Color oldContentColor = GUI.contentColor;
         GUI.contentColor = new Color(0.95f, 0.82f, 0.56f, oldContentColor.a);
-        GUILayout.Label("──────── " + category + " ────────");
+        GUILayout.Label("──────── " + LocalizedRequirementCategoryName(category) + " ────────");
         GUI.contentColor = oldContentColor;
     }
 
@@ -574,13 +1038,44 @@ internal static class NextCustomerWindow
             : "Other / external";
     }
 
+    private static string LocalizedRequirementCategoryName(string category)
+    {
+        switch (category)
+        {
+            case "Potion effects":
+                return T("category.potionEffects");
+            case "Ingredient targets":
+                return T("category.ingredientTargets");
+            case "Potion base limits":
+                return T("category.potionBaseLimits");
+            case "Ingredient count":
+                return T("category.ingredientCount");
+            case "Potion quality":
+                return T("category.potionQuality");
+            case "No salts":
+                return T("category.noSalts");
+            case "Mod: ingredient categories":
+                return T("category.modIngredientCategories");
+            case "Mod: ingredient counts":
+                return T("category.modIngredientCounts");
+            case "Mod: other":
+                return T("category.modOther");
+            case "Other native":
+                return T("category.otherNative");
+            case "Other / external":
+                return T("category.otherExternal");
+            default:
+                return category;
+        }
+    }
+
     private static void RunSearch()
     {
         cachedCustomers = RegularCustomerPool.GetAvailableRegularCustomers(
                 PreviewChapter(),
                 PreviewKarma(),
                 StrictPlanningMode())
-            .Where(CacheAndMatchFilters)
+            .Where(candidate => CacheAndMatchFilters(candidate))
             .ToList();
         foreach (RegularCustomerOption customer in cachedCustomers)
         {
@@ -592,7 +1087,7 @@ internal static class NextCustomerWindow
             : Mathf.Clamp(selectedCustomerIndex, 0, cachedCustomers.Count - 1);
         selectedQuestIndex = 0;
         customersScroll = Vector2.zero;
-        searchStatus = $"Search complete. Chapter={PreviewChapter()}, Karma={PreviewKarma()}.";
+        searchStatus = T("state.searchComplete", PreviewChapter(), PreviewKarma());
     }
 
     private static void ClearSearchResults()
@@ -600,7 +1095,7 @@ internal static class NextCustomerWindow
         cachedCustomers.Clear();
         selectedCustomerIndex = 0;
         customersScroll = Vector2.zero;
-        searchStatus = "Results cleared. Click Search to populate the customer list.";
+        searchStatus = T("state.resultsCleared");
     }
 
     private static void ImportCurrentCustomer()
@@ -612,7 +1107,7 @@ internal static class NextCustomerWindow
                 out IReadOnlyList<GeneratedQuestRequirement> optionalRequirements,
                 out string reason))
         {
-            actionStatus = $"Import current blocked: {reason}";
+            actionStatus = T("state.importCurrentBlocked", reason);
             return;
         }
 
@@ -630,10 +1125,14 @@ internal static class NextCustomerWindow
         selectedQuestIndex = currentQuest == null ? 0 : Mathf.Max(0, quests.IndexOf(currentQuest));
         ImportCurrentRequirements(mandatoryRequirements, optionalRequirements);
         customersScroll = Vector2.zero;
-        searchStatus = "Imported current customer.";
+        searchStatus = T("state.importedCurrent");
         actionStatus =
-            $"Imported current customer: {current.Template?.name ?? "-"} / quest={currentQuest?.name ?? "-"}"
-            + $" / requirements={mandatoryRequirements.Count}+{optionalRequirements.Count}";
+            T(
+                "state.importedCurrentDetails",
+                current.Template?.name ?? "-",
+                currentQuest?.name ?? "-",
+                mandatoryRequirements.Count,
+                optionalRequirements.Count);
     }
 
     private static void ImportCurrentRequirements(
@@ -688,6 +1187,14 @@ internal static class NextCustomerWindow
             && left.FactionClass == right.FactionClass;
     }
 
+    private static bool IsSameQuest(Quest left, Quest right)
+    {
+        if (left == null || right == null)
+            return false;
+        return ReferenceEquals(left, right)
+            || string.Equals(left.name, right.name, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static PlannedCustomer CreatePlan(
         RegularCustomerOption selected,
         Quest targetQuest,
@@ -698,6 +1205,21 @@ internal static class NextCustomerWindow
             selected,
             targetQuest,
             PreviewChapter(),
+            StrictPlanningMode(),
+            mandatory,
+            optional);
+    }
+
+    private static PlannedCustomer CreateCurrentPlan(
+        RegularCustomerOption selected,
+        Quest targetQuest,
+        IReadOnlyList<PlannedRequirement> mandatory,
+        IReadOnlyList<PlannedRequirement> optional)
+    {
+        return new PlannedCustomer(
+            selected,
+            targetQuest,
+            CurrentChapter(),
             StrictPlanningMode(),
             mandatory,
             optional);
@@ -724,6 +1246,11 @@ internal static class NextCustomerWindow
 
     private static bool CacheAndMatchFilters(RegularCustomerOption option)
     {
+        return CacheAndMatchFilters(option, PreviewChapter());
+    }
+
+    private static bool CacheAndMatchFilters(RegularCustomerOption option, int chapter)
+    {
         if (!string.IsNullOrWhiteSpace(exactInternalNameFilter)
             && !MatchesExactInternalName(option, exactInternalNameFilter))
         {
@@ -733,7 +1260,7 @@ internal static class NextCustomerWindow
         if (!ContainsIgnoreCase(option.DisplayName, textFilter))
             return false;
 
-        List<Quest> quests = RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(option, PreviewChapter());
+        List<Quest> quests = RegularCustomerPool.GetSpawnableQuestsForRegularCustomer(option, chapter);
         option.CachedEnabledQuestCount = quests.Count;
         option.CachedMatchingQuests = MatchingQuests(quests);
         return option.CachedMatchingQuests.Count > 0;
@@ -1521,11 +2048,11 @@ internal static class NextCustomerWindow
         {
             if (requirement.ingredient != null)
             {
-                targetInfo = RequirementTargetInfo.FixedTarget("Ingredient", requirement.ingredient.name);
+                targetInfo = RequirementTargetInfo.FixedTarget(T("target.ingredient"), requirement.ingredient.name);
                 return true;
             }
 
-            targetInfo = RequirementTargetInfo.EditableTarget("Ingredient", RequirementTargetKind.Ingredient);
+            targetInfo = RequirementTargetInfo.EditableTarget(T("target.ingredient"), RequirementTargetKind.Ingredient);
             return true;
         }
 
@@ -1533,11 +2060,11 @@ internal static class NextCustomerWindow
         {
             if (requirement.potionBase != null)
             {
-                targetInfo = RequirementTargetInfo.FixedTarget("Base", requirement.potionBase.name);
+                targetInfo = RequirementTargetInfo.FixedTarget(T("target.base"), requirement.potionBase.name);
                 return true;
             }
 
-            targetInfo = RequirementTargetInfo.EditableTarget("Base", RequirementTargetKind.Base);
+            targetInfo = RequirementTargetInfo.EditableTarget(T("target.base"), RequirementTargetKind.Base);
             return true;
         }
 
@@ -1546,7 +2073,7 @@ internal static class NextCustomerWindow
             out string declaredTargetDisplayName))
         {
             targetInfo = RequirementTargetInfo.FixedTarget(
-                "Target",
+                T("target.generic"),
                 declaredTargetDisplayName);
             return true;
         }
@@ -1566,7 +2093,7 @@ internal static class NextCustomerWindow
         CachePickerAnchor(anchorKey, buttonRect);
         if (open)
             OpenTargetPicker(requirement, name, targetQuest, targetInfo, anchorKey, buttonRect);
-        if (GUILayout.Button("Clear", Width(55f)))
+        if (GUILayout.Button(T("target.clear"), Width(55f)))
             SetRequirementTargetValue(name, string.Empty, updateSelection: true);
     }
 
@@ -1887,13 +2414,18 @@ internal static class NextCustomerWindow
     private static GUIStyle PickerButtonStyle()
     {
         int fontSize = PickerFontSize();
-        if (pickerButtonStyle != null && pickerButtonStyleFontSize == fontSize)
+        string fontKey = UiFontKey();
+        if (pickerButtonStyle != null
+            && pickerButtonStyleFontSize == fontSize
+            && string.Equals(pickerButtonStyleFontKey, fontKey, StringComparison.Ordinal))
             return pickerButtonStyle;
         pickerButtonStyle = new GUIStyle(GUI.skin.button)
         {
+            font = UiFont(),
             fontSize = fontSize
         };
         pickerButtonStyleFontSize = fontSize;
+        pickerButtonStyleFontKey = fontKey;
         return pickerButtonStyle;
     }
 
@@ -2201,27 +2733,89 @@ internal static class NextCustomerWindow
     private static GUISkin GetWindowSkin()
     {
         int fontSize = Mathf.Clamp(uiFontSize?.Value ?? 16, 10, 30);
-        if (windowSkin != null && windowSkinFontSize == fontSize)
+        string fontKey = UiFontKey();
+        if (windowSkin != null && windowSkinFontSize == fontSize && string.Equals(windowSkinFontKey, fontKey, StringComparison.Ordinal))
             return windowSkin;
 
         windowSkin = UnityEngine.Object.Instantiate(GUI.skin);
         windowSkinFontSize = fontSize;
-        ApplyFontSize(windowSkin.label, fontSize);
-        ApplyFontSize(windowSkin.button, fontSize);
-        ApplyFontSize(windowSkin.toggle, fontSize);
-        ApplyFontSize(windowSkin.textField, fontSize);
-        ApplyFontSize(windowSkin.textArea, fontSize);
-        ApplyFontSize(windowSkin.box, fontSize);
-        ApplyFontSize(windowSkin.window, fontSize);
+        windowSkinFontKey = fontKey;
+        Font font = UiFont();
+        ApplyFont(windowSkin.label, font, fontSize);
+        ApplyFont(windowSkin.button, font, fontSize);
+        ApplyFont(windowSkin.toggle, font, fontSize);
+        ApplyFont(windowSkin.textField, font, fontSize);
+        ApplyFont(windowSkin.textArea, font, fontSize);
+        ApplyFont(windowSkin.box, font, fontSize);
+        ApplyFont(windowSkin.window, font, fontSize);
+        ApplyWindowTitleMetrics(windowSkin.window, fontSize);
         ApplyBackground(windowSkin.window, ref windowBackgroundTexture, new Color(0.08f, 0.07f, 0.05f, 0.94f));
         ApplyBackground(windowSkin.box, ref boxBackgroundTexture, new Color(0.10f, 0.09f, 0.07f, 0.86f));
+        pickerButtonStyle = null;
+        ColoredButtonStyles.Clear();
         return windowSkin;
     }
 
-    private static void ApplyFontSize(GUIStyle style, int fontSize)
+    private static void ApplyFont(GUIStyle style, Font font, int fontSize)
     {
         if (style != null)
+        {
+            if (font != null)
+                style.font = font;
             style.fontSize = fontSize;
+        }
+    }
+
+    private static void ApplyWindowTitleMetrics(GUIStyle style, int fontSize)
+    {
+        if (style == null)
+            return;
+
+        int titleHeight = Mathf.CeilToInt(WindowTitleHeight(fontSize));
+        style.padding = new RectOffset(
+            style.padding.left,
+            style.padding.right,
+            Mathf.Max(style.padding.top, titleHeight),
+            style.padding.bottom);
+        style.contentOffset = new Vector2(style.contentOffset.x, Mathf.Min(style.contentOffset.y, -U(1f)));
+    }
+
+    private static float WindowTitleHeight()
+    {
+        return WindowTitleHeight(uiFontSize?.Value ?? 16);
+    }
+
+    private static float WindowTitleHeight(int fontSize)
+    {
+        return Mathf.Max(U(24f), fontSize + U(12f));
+    }
+
+    private static Font UiFont()
+    {
+        string fontKey = UiFontKey();
+        if (windowFont != null && string.Equals(windowFontKey, fontKey, StringComparison.Ordinal))
+            return windowFont;
+
+        string[] names = (uiFontNames?.Value ?? string.Empty)
+            .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(name => name.Trim())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToArray();
+        if (names.Length == 0)
+        {
+            windowFont = null;
+            windowFontKey = fontKey;
+            return null;
+        }
+
+        windowFont = Font.CreateDynamicFontFromOSFont(names, Mathf.Max(uiFontSize?.Value ?? 16, pickerFontSize?.Value ?? 16));
+        windowFontKey = fontKey;
+        return windowFont;
+    }
+
+    private static string UiFontKey()
+    {
+        return uiFontNames?.Value ?? string.Empty;
     }
 
     private static float UiScale()
@@ -2278,6 +2872,8 @@ internal static class NextCustomerWindow
     {
         windowRect.width = Mathf.Max(windowRect.width, U(1320f));
         windowRect.height = Mathf.Max(windowRect.height, U(820f));
+        randomRuleWindowRect.width = Mathf.Max(randomRuleWindowRect.width, U(860f));
+        randomRuleWindowRect.height = Mathf.Max(randomRuleWindowRect.height, U(680f));
     }
 
     private static void ApplyBackground(GUIStyle style, ref Texture2D texture, Color color)
@@ -2347,6 +2943,7 @@ internal static class NextCustomerWindow
         rect.x = Mathf.Min(rect.x, Screen.width - rect.width - 8f);
         rect.y = Mathf.Min(rect.y, Screen.height - rect.height - 8f);
         GUI.Box(rect, content);
+        DrawLocalBorder(rect, new Color(0.95f, 0.78f, 0.45f, 1f), U(2f));
     }
 
     private static List<PlannedRequirement> SelectedRequirements(RequirementSelection selection)
@@ -2639,11 +3236,14 @@ internal static class NextCustomerWindow
 
     private static GUIStyle ColoredButtonStyle(Color color)
     {
-        string key = $"{windowSkinFontSize}:{ColorUtility.ToHtmlStringRGBA(color)}";
+        string key = $"{windowSkinFontSize}:{UiFontKey()}:{ColorUtility.ToHtmlStringRGBA(color)}";
         if (ColoredButtonStyles.TryGetValue(key, out GUIStyle style))
             return style;
 
         style = new GUIStyle(GUI.skin.button);
+        Font font = UiFont();
+        if (font != null)
+            style.font = font;
         Texture2D texture = ColorTexture(color);
         style.normal.background = texture;
         style.hover.background = texture;
@@ -2683,14 +3283,14 @@ internal static class NextCustomerWindow
         GUILayout.BeginHorizontal();
         GUILayout.Label(label, Width(95f));
         string anchorKey = EffectAnchorKey(pickerMode);
-        bool open = GUILayout.Button("Select effect ▼", Width(180f));
+        bool open = GUILayout.Button(T("filters.selectEffect"), Width(180f));
         Rect buttonRect = GUILayoutUtility.GetLastRect();
         CachePickerAnchor(anchorKey, buttonRect);
         if (open)
             OpenEffectPicker(pickerMode, anchorKey, buttonRect);
         string result = value ?? string.Empty;
         result = GUILayout.TextField(result, Width(420f));
-        if (GUILayout.Button("Clear", Width(55f)))
+        if (GUILayout.Button(T("target.clear"), Width(55f)))
             result = string.Empty;
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
@@ -2705,12 +3305,12 @@ internal static class NextCustomerWindow
     private static void DrawEffectFilters()
     {
         GUILayout.BeginVertical(GUI.skin.box);
-        GUILayout.Label("Quest effect filters");
-        mustHaveEffectFilter = EffectFilterField("Needs", mustHaveEffectFilter, PickerMode.NeedsEffect);
-        mustNotHaveEffectFilter = EffectFilterField("Excludes", mustNotHaveEffectFilter, PickerMode.ExcludesEffect);
-        DrawEffectTokenIconRow("Needs all", mustHaveEffectFilter);
-        DrawEffectTokenIconRow("Excludes any", mustNotHaveEffectFilter);
-        GUILayout.Label("Click Search after changing filters.");
+        GUILayout.Label(T("filters.title"));
+        mustHaveEffectFilter = EffectFilterField(T("filters.needs"), mustHaveEffectFilter, PickerMode.NeedsEffect);
+        mustNotHaveEffectFilter = EffectFilterField(T("filters.excludes"), mustNotHaveEffectFilter, PickerMode.ExcludesEffect);
+        DrawEffectTokenIconRow(T("filters.needsAll"), mustHaveEffectFilter);
+        DrawEffectTokenIconRow(T("filters.excludesAny"), mustNotHaveEffectFilter);
+        GUILayout.Label(T("filters.searchHint"));
         GUILayout.EndVertical();
     }
 
@@ -3138,6 +3738,14 @@ internal static class NextCustomerWindow
         return value;
     }
 
+    private static int IntField(int value, int min, int max, params GUILayoutOption[] options)
+    {
+        string text = GUILayout.TextField(value.ToString(), options);
+        if (int.TryParse(text, out int parsed))
+            return Mathf.Clamp(parsed, min, max);
+        return value;
+    }
+
     private readonly struct RequirementTargetInfo
     {
         public string Label { get; }
@@ -3318,6 +3926,23 @@ internal static class NextCustomerWindow
         None,
         Ingredient,
         Base,
+    }
+
+    private static string T(string key)
+    {
+        return CustomerPlannerLocalization.Text(key);
+    }
+
+    private static string T(string key, params object[] args)
+    {
+        return CustomerPlannerLocalization.Text(key, args);
+    }
+
+    private static string LocalizedStatus(string status)
+    {
+        return string.Equals(status, "Click Search to populate the customer list.", StringComparison.Ordinal)
+            ? T("state.searchPrompt")
+            : status;
     }
 
     private enum TargetFilledSelectionMode
