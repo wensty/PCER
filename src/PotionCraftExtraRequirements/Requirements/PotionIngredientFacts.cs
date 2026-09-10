@@ -37,4 +37,9 @@ public static class PotionIngredientFacts
         return ingredients.Count > 0
             && ingredients.All(component => component.Amount <= maximumAmount);
     }
+
+    public static int IngredientAmount(Potion potion)
+    {
+        return Ingredients(potion).Sum(component => component.Amount);
+    }
 }

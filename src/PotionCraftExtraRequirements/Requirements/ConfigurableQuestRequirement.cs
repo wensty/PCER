@@ -45,7 +45,17 @@ public sealed class ConfigurableQuestRequirement : QuestRequirementNoSalts
         List<GeneratedQuestRequirement> generatedRequirements,
         GeneratedQuestRequirement requirement)
     {
-        return Definition.CanGenerate(quest, generatedRequirements);
+        RequirementDefinition definition = Definition;
+        if (!definition.CanGenerate(quest, generatedRequirements))
+            return false;
+
+        if (definition.Id == BuiltInRequirementDefinitions.SimpleRecipeId)
+            SimpleRecipeRequirementLogic.UpdateGeneratedRequirement(
+                quest,
+                generatedRequirements,
+                requirement);
+
+        return true;
     }
 
     public override bool IsCompatibleWithOtherRequirements(

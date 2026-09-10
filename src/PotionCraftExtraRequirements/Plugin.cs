@@ -30,6 +30,8 @@ public sealed class Plugin : BaseUnityPlugin
         harmony.PatchAll(typeof(RequirementUnlockChapterPatch));
         Logger.LogInfo("Patching native requirement compatibility.");
         harmony.PatchAll(typeof(NativeRequirementCompatibilityPatches));
+        Logger.LogInfo("Patching generated requirement text formatting.");
+        harmony.PatchAll(typeof(GeneratedRequirementTextPatches));
         Logger.LogInfo("Patching mod localization.");
         harmony.PatchAll(typeof(ModLocalizationPatches));
         Logger.LogInfo("Startup patches installed.");
