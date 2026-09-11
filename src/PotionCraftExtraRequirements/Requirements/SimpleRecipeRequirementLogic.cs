@@ -14,19 +14,19 @@ namespace PotionCraftExtraRequirements;
 internal static class SimpleRecipeRequirementLogic
 {
     private const string FullRequirementName = "PCER_" + BuiltInRequirementDefinitions.SimpleRecipeId;
-    private const int BaseIngredientAmount = 1;
-    private const float DistanceStep = 8.0f;
-    private const int AdditionalEffectsAllowance = 4;
-    private const int DullRecipeAllowance = 2;
-    private static readonly Dictionary<Quest, int> EffectDistanceAllowanceCache =
-        new Dictionary<Quest, int>();
+    private const int MinimumAmount = 1;
+    private const float DistanceStep = 7.2f;
+    private const float AdditionalEffectsAllowance = 4.0f;
+    private const float NoSaltsMultiplier = 1.75f;
+    private static readonly Dictionary<Quest, float> EffectDistanceAllowanceCache =
+        new Dictionary<Quest, float>();
 
     public static bool IsSatisfied(
         Potion potion,
         Quest quest,
         GeneratedQuestRequirement generatedRequirement)
     {
-        int maximumAmount = Math.Max(BaseIngredientAmount, generatedRequirement?.intValue1 ?? BaseIngredientAmount);
+        int maximumAmount = Math.Max(MinimumAmount, generatedRequirement?.intValue1 ?? MinimumAmount);
         int actualAmount = PotionIngredientFacts.IngredientAmount(potion);
         return actualAmount > 0 && actualAmount <= maximumAmount;
     }
@@ -59,37 +59,44 @@ internal static class SimpleRecipeRequirementLogic
         Quest quest,
         IReadOnlyList<GeneratedQuestRequirement> generatedRequirements)
     {
-        int maximum = BaseIngredientAmount + EffectDistanceAllowance(quest);
+        float maximum = EffectDistanceAllowance(quest);
+        float multiplier = 1.0f;
 
-        if (generatedRequirements == null)
-            return maximum;
-
-        foreach (GeneratedQuestRequirement generated in generatedRequirements)
+        if (generatedRequirements != null)
         {
-            if (generated?.requirementInQuest?.requirement == null)
-                continue;
-
-            QuestRequirement requirement = generated.requirementInQuest.requirement;
-            if (IsSimpleRecipeRequirement(generated))
-                continue;
-
-            if (requirement is QuestRequirementsAdditionalEffects)
+            foreach (GeneratedQuestRequirement generated in generatedRequirements)
             {
-                maximum += AdditionalEffectsAllowance;
-                continue;
-            }
+                if (generated?.requirementInQuest?.requirement == null)
+                    continue;
 
-            if (requirement.GetType() == typeof(QuestRequirementNoSalts))
-            {
-                maximum += DullRecipeAllowance;
-                continue;
-            }
+                QuestRequirement requirement = generated.requirementInQuest.requirement;
+                if (IsSimpleRecipeRequirement(generated))
+                    continue;
 
-            if (TryGetHighlanderOrLowlanderLimit(generated, out int limit))
-                maximum += AllowanceForLimit(limit);
+                if (requirement is QuestRequirementsAdditionalEffects)
+                {
+                    maximum += AdditionalEffectsAllowance;
+                    continue;
+                }
+
+                if (requirement.GetType() == typeof(QuestRequirementNoSalts))
+                {
+                    multiplier *= NoSaltsMultiplier;
+                    continue;
+                }
+
+                if (TryGetHighlanderLimit(generated, out int highlanderLimit))
+                {
+                    maximum += highlanderLimit;
+                    continue;
+                }
+
+                if (TryGetLowlanderLimit(generated, out int lowlanderLimit))
+                    multiplier *= LowlanderMultiplier(lowlanderLimit);
+            }
         }
 
-        return Math.Max(BaseIngredientAmount, maximum);
+        return Math.Max(MinimumAmount, Mathf.FloorToInt(maximum * multiplier));
     }
 
     public static bool IsSimpleRecipeRequirement(GeneratedQuestRequirement generated)
@@ -125,16 +132,49 @@ internal static class SimpleRecipeRequirementLogic
         if (!IsSimpleRecipeRequirement(generated) || string.IsNullOrEmpty(value))
             return value;
 
-        string result = value.Replace("{0}", LimitText(generated));
-        if (result.StartsWith("#", StringComparison.Ordinal)
-            && !ModLocalization.Contains(result.Substring(1)))
-            return result.Substring(1);
-        return result;
+        return StripBareTextMarker(value.Replace("{0}", LimitText(generated)));
+    }
+
+    private static string StripBareTextMarker(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
+        int firstTextIndex = 0;
+        while (firstTextIndex < value.Length && char.IsWhiteSpace(value[firstTextIndex]))
+            firstTextIndex++;
+
+        if (firstTextIndex >= value.Length)
+            return value;
+
+        if (value[firstTextIndex] == '#')
+        {
+            if (firstTextIndex + 1 < value.Length && value[firstTextIndex + 1] == '<')
+                return value;
+
+            return value.Remove(firstTextIndex, 1);
+        }
+
+        if (value[firstTextIndex] != '<')
+            return value;
+
+        int tagEndIndex = value.IndexOf('>', firstTextIndex);
+        if (tagEndIndex < 0 || tagEndIndex + 1 >= value.Length)
+            return value;
+
+        int textAfterTagIndex = tagEndIndex + 1;
+        while (textAfterTagIndex < value.Length && char.IsWhiteSpace(value[textAfterTagIndex]))
+            textAfterTagIndex++;
+
+        if (textAfterTagIndex < value.Length && value[textAfterTagIndex] == '#')
+            return value.Remove(textAfterTagIndex, 1);
+
+        return value;
     }
 
     private static string LimitText(GeneratedQuestRequirement generated)
     {
-        return Math.Max(BaseIngredientAmount, generated?.intValue1 ?? BaseIngredientAmount).ToString();
+        return Math.Max(MinimumAmount, generated?.intValue1 ?? MinimumAmount).ToString();
     }
 
     private static string MaterializeTextField(string value, string limit)
@@ -163,15 +203,15 @@ internal static class SimpleRecipeRequirementLogic
         return value.Replace("{0}", limit);
     }
 
-    private static int EffectDistanceAllowance(Quest quest)
+    private static float EffectDistanceAllowance(Quest quest)
     {
-        if (quest != null && EffectDistanceAllowanceCache.TryGetValue(quest, out int cached))
+        if (quest != null && EffectDistanceAllowanceCache.TryGetValue(quest, out float cached))
             return cached;
 
         float farthestDistance = FarthestDesiredEffectDistanceOnDefaultBase(quest);
-        int allowance = farthestDistance <= 0f
-            ? 0
-            : Mathf.FloorToInt(farthestDistance / DistanceStep);
+        float allowance = farthestDistance <= 0f
+            ? 0f
+            : farthestDistance / DistanceStep;
 
         if (quest != null)
             EffectDistanceAllowanceCache[quest] = allowance;
@@ -213,7 +253,7 @@ internal static class SimpleRecipeRequirementLogic
             && definition.Tags.Contains(BuiltInRequirementDefinitions.BroadCategoryTag);
     }
 
-    private static bool TryGetHighlanderOrLowlanderLimit(
+    private static bool TryGetHighlanderLimit(
         GeneratedQuestRequirement generated,
         out int limit)
     {
@@ -221,12 +261,6 @@ internal static class SimpleRecipeRequirementLogic
         QuestRequirement requirement = generated?.requirementInQuest?.requirement;
         if (requirement == null)
             return false;
-
-        if (requirement is QuestRequirementMaxIngredients)
-        {
-            limit = generated.intValue1;
-            return limit >= 1 && limit <= 3;
-        }
 
         string requirementName = requirement.name;
         if (requirementName != null
@@ -239,18 +273,43 @@ internal static class SimpleRecipeRequirementLogic
         return false;
     }
 
-    private static int AllowanceForLimit(int limit)
+    private static bool TryGetLowlanderLimit(
+        GeneratedQuestRequirement generated,
+        out int limit)
+    {
+        limit = 0;
+        QuestRequirement requirement = generated?.requirementInQuest?.requirement;
+        if (requirement == null)
+            return false;
+
+        string requirementName = requirement.name;
+        if (requirementName == null)
+            return false;
+
+        string suffix = null;
+        if (requirementName.StartsWith("PCER_Lowlander", StringComparison.Ordinal))
+            suffix = requirementName.Substring("PCER_Lowlander".Length);
+        else if (requirementName.StartsWith("Lowlander", StringComparison.Ordinal))
+            suffix = requirementName.Substring("Lowlander".Length);
+
+        return suffix != null
+            && int.TryParse(suffix, out limit)
+            && limit >= 1
+            && limit <= 3;
+    }
+
+    private static float LowlanderMultiplier(int limit)
     {
         switch (limit)
         {
             case 1:
-                return 4;
+                return 1.6f;
             case 2:
-                return 2;
+                return 1.3f;
             case 3:
-                return 1;
+                return 1.1f;
             default:
-                return 0;
+                return 1.0f;
         }
     }
 }

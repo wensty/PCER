@@ -1463,10 +1463,43 @@ internal static class NextCustomerDirector
             allGenerated.Add(generated);
         }
 
+        RefreshGeneratedRequirementValues(quest, allGenerated);
+
         if (!AllGeneratedRequirementsValid(quest, allGenerated, out string conflictReason))
             return RequirementGenerationResult.Blocked(conflictReason);
 
         return RequirementGenerationResult.Allowed(mandatory, optional);
+    }
+
+    private static void RefreshGeneratedRequirementValues(
+        Quest quest,
+        IReadOnlyList<GeneratedQuestRequirement> generatedRequirements)
+    {
+        if (quest == null || generatedRequirements == null)
+            return;
+
+        for (int i = 0; i < generatedRequirements.Count; i++)
+        {
+            GeneratedQuestRequirement generated = generatedRequirements[i];
+            QuestRequirement requirement = generated?.requirementInQuest?.requirement;
+            if (requirement == null)
+                continue;
+
+            List<GeneratedQuestRequirement> others = generatedRequirements
+                .Where((_, index) => index != i)
+                .ToList();
+            if (!requirement.IsCompatibleWithOtherRequirements(others))
+                continue;
+
+            GeneratedQuestRequirement refreshed = CloneGeneratedRequirementWithFixedTarget(generated);
+            if (!requirement.UpdateGeneratedRequirement(quest, others, refreshed))
+                continue;
+
+            if (!string.Equals(generated.stringValue1, refreshed.stringValue1, System.StringComparison.Ordinal))
+                continue;
+
+            CopyGeneratedRequirementValues(refreshed, generated);
+        }
     }
 
     private static bool TryGenerateRequirement(
@@ -1790,6 +1823,20 @@ internal static class NextCustomerDirector
     {
         return expected.intValue1 == actual.intValue1
             && string.Equals(expected.stringValue1, actual.stringValue1, System.StringComparison.Ordinal);
+    }
+
+    private static void CopyGeneratedRequirementValues(
+        GeneratedQuestRequirement source,
+        GeneratedQuestRequirement destination)
+    {
+        destination.intValue1 = source.intValue1;
+        destination.stringValue1 = source.stringValue1;
+        destination.textMale = source.textMale;
+        destination.textFemale = source.textFemale;
+        destination.reactionMale = source.reactionMale;
+        destination.reactionFemale = source.reactionFemale;
+        destination.reactionCompletedPartiallyMale = source.reactionCompletedPartiallyMale;
+        destination.reactionCompletedPartiallyFemale = source.reactionCompletedPartiallyFemale;
     }
 
     private static List<GeneratedQuestRequirement> CloneGeneratedRequirements(
