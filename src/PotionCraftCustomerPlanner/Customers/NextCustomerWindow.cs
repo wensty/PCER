@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -409,6 +410,10 @@ internal static class NextCustomerWindow
     private static void DrawSelectedCustomerDetails(RegularCustomerOption selected)
     {
         GUILayout.Label(T("details.selectedCustomer"));
+#if DEBUG
+        if (GUILayout.Button(T("details.exportElementCsv"), Height(26f)))
+            ExportElementAffinityCsv();
+#endif
         if (selected == null)
         {
             GUILayout.Label(T("details.noCustomer"));
@@ -454,7 +459,7 @@ internal static class NextCustomerWindow
                 ? T("details.showFewerQuests")
                 : T("details.showMoreQuests", hiddenCount);
             if (GUILayout.Button(label, Height(28f)))
-            showAllMatchingQuests = !showAllMatchingQuests;
+                showAllMatchingQuests = !showAllMatchingQuests;
         }
     }
 
@@ -1721,6 +1726,223 @@ internal static class NextCustomerWindow
     }
 
 #if DEBUG
+    private static void ExportElementAffinityCsv()
+    {
+        try
+        {
+            List<string> lines = new List<string>();
+            ElementType[] elements = Enum.GetValues(typeof(ElementType))
+                .Cast<ElementType>()
+                .OrderBy(element => element.ToString(), StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            lines.Add(CsvRow("Section", "Effect elements"));
+            lines.Add(CsvRow("EffectName", "DominantElement", "ElementPotentialValues"));
+            foreach (PotionEffect effect in (PotionEffect.allPotionEffects ?? new List<PotionEffect>())
+                .Where(effect => effect != null)
+                .OrderBy(effect => effect.name, StringComparer.OrdinalIgnoreCase))
+            {
+                lines.Add(CsvRow(
+                    effect.name,
+                    SafeDominantElement(effect),
+                    string.Join(
+                        "; ",
+                        elements.Select(element => $"{element}={SafeEffectPotential(effect, element)}").ToArray())));
+            }
+
+            lines.Add(string.Empty);
+            lines.Add(CsvRow("Section", "Ingredient elemental potentials"));
+            List<string> header = new List<string>
+            {
+                "IngredientName",
+                "ItemType",
+                "Chapter"
+            };
+            header.AddRange(elements.Select(element => "Normal_" + element));
+            header.AddRange(elements.Select(element => "ShortDistance_" + element));
+            lines.Add(CsvRow(header.ToArray()));
+
+            foreach (Ingredient ingredient in (Ingredient.allIngredients ?? new List<Ingredient>())
+                .Where(ingredient => ingredient != null)
+                .OrderBy(ingredient => ingredient.name, StringComparer.OrdinalIgnoreCase))
+            {
+                ElementalPotential normalPotential = ingredient.GetElementalPotential(false);
+                ElementalPotential shortDistancePotential = ingredient.GetElementalPotential(true);
+                List<string> row = new List<string>
+                {
+                    ingredient.name,
+                    ingredient.GetItemType().ToString(),
+                    ingredient.chapter.ToString(CultureInfo.InvariantCulture)
+                };
+                row.AddRange(elements.Select(element => SafeIngredientPotential(normalPotential, element)));
+                row.AddRange(elements.Select(element => SafeIngredientPotential(shortDistancePotential, element)));
+                lines.Add(CsvRow(row.ToArray()));
+            }
+
+            lines.Add(string.Empty);
+            lines.Add(CsvRow("Section", "Ingredient requirement generation settings"));
+            lines.Add(CsvRow(
+                "RequirementName",
+                "RequirementType",
+                "WrapperIngredient",
+                "CheckPotential",
+                "ShortDistancePotential",
+                "PotentialThreshold",
+                "CheckPotentialFieldFound",
+                "ShortDistancePotentialFieldFound",
+                "PotentialThresholdFieldFound"));
+            foreach (QuestRequirementInQuest requirement in (QuestRequirementInQuest.allRequirements ?? new List<QuestRequirementInQuest>())
+                .Where(requirement => requirement?.requirement is QuestRequirementCertainIngredient)
+                .OrderBy(requirement => requirement.requirement.name, StringComparer.OrdinalIgnoreCase))
+            {
+                QuestRequirementCertainIngredient certainIngredient =
+                    (QuestRequirementCertainIngredient)requirement.requirement;
+                lines.Add(CsvRow(
+                    requirement.requirement.name,
+                    requirement.requirement.GetType().FullName,
+                    requirement.ingredient?.name ?? string.Empty,
+                    GetPrivateBool(certainIngredient, IngredientCheckPotentialField, fallback: true).ToString(),
+                    GetPrivateBool(certainIngredient, IngredientShortDistancePotentialField, fallback: false).ToString(),
+                    FormatCsvFloat(GetPrivateFloat(certainIngredient, IngredientPotentialThresholdField, fallback: float.NaN)),
+                    (IngredientCheckPotentialField != null).ToString(),
+                    (IngredientShortDistancePotentialField != null).ToString(),
+                    (IngredientPotentialThresholdField != null).ToString()));
+            }
+
+            string directory = Path.GetDirectoryName(typeof(Plugin).Assembly.Location);
+            if (string.IsNullOrWhiteSpace(directory))
+                directory = Environment.CurrentDirectory;
+            Directory.CreateDirectory(directory);
+            string path = Path.Combine(directory, "ElementAffinityDiagnostics.csv");
+            File.WriteAllLines(path, lines);
+            string pointsPath = WriteIngredientPathPointsCsv(directory);
+            searchStatus = $"Element affinity CSV written to {path}; path points written to {pointsPath}";
+            logger?.LogInfo($"Element affinity CSV written to {path}; path points written to {pointsPath}");
+        }
+        catch (Exception ex)
+        {
+            searchStatus = $"Failed to write element affinity CSV: {ex.Message}";
+            logger?.LogWarning($"Failed to write element affinity CSV: {ex}");
+        }
+    }
+
+    private static string WriteIngredientPathPointsCsv(string directory)
+    {
+        List<string> lines = new List<string>
+        {
+            CsvRow(
+                "IngredientName",
+                "ItemType",
+                "Chapter",
+                "PointSet",
+                "PointIndex",
+                "X",
+                "Y",
+                "Z")
+        };
+
+        foreach (Ingredient ingredient in (Ingredient.allIngredients ?? new List<Ingredient>())
+            .Where(ingredient => ingredient != null)
+            .OrderBy(ingredient => ingredient.name, StringComparer.OrdinalIgnoreCase))
+        {
+            AddIngredientPathPointRows(lines, ingredient, "Main", ingredient.path?.EvenlySpacedPointsMain?.points);
+            AddIngredientPathPointRows(lines, ingredient, "Grinded", ingredient.path?.EvenlySpacedPointsGrinded?.points);
+        }
+
+        string path = Path.Combine(directory, "IngredientPathPointsDiagnostics.csv");
+        File.WriteAllLines(path, lines);
+        return path;
+    }
+
+    private static void AddIngredientPathPointRows(
+        List<string> lines,
+        Ingredient ingredient,
+        string pointSet,
+        Vector3[] points)
+    {
+        if (points == null || points.Length == 0)
+        {
+            lines.Add(CsvRow(
+                ingredient.name,
+                ingredient.GetItemType().ToString(),
+                ingredient.chapter.ToString(CultureInfo.InvariantCulture),
+                pointSet,
+                "-",
+                string.Empty,
+                string.Empty,
+                string.Empty));
+            return;
+        }
+
+        for (int i = 0; i < points.Length; i++)
+        {
+            Vector3 point = points[i];
+            lines.Add(CsvRow(
+                ingredient.name,
+                ingredient.GetItemType().ToString(),
+                ingredient.chapter.ToString(CultureInfo.InvariantCulture),
+                pointSet,
+                i.ToString(CultureInfo.InvariantCulture),
+                FormatCsvFloat(point.x),
+                FormatCsvFloat(point.y),
+                FormatCsvFloat(point.z)));
+        }
+    }
+
+    private static string SafeDominantElement(PotionEffect effect)
+    {
+        try
+        {
+            return effect?.elementalPotential?.GetDominantElementType().ToString() ?? "-";
+        }
+        catch (Exception ex)
+        {
+            return "error: " + ex.GetType().Name;
+        }
+    }
+
+    private static string SafeEffectPotential(PotionEffect effect, ElementType element)
+    {
+        try
+        {
+            return FormatCsvFloat(effect?.elementalPotential?.GetPotential(element, 0, false) ?? 0f);
+        }
+        catch (Exception ex)
+        {
+            return "error: " + ex.GetType().Name;
+        }
+    }
+
+    private static string SafeIngredientPotential(ElementalPotential potential, ElementType element)
+    {
+        try
+        {
+            return FormatCsvFloat(potential?.GetPotential(element, 0, false) ?? 0f);
+        }
+        catch (Exception ex)
+        {
+            return "error: " + ex.GetType().Name;
+        }
+    }
+
+    private static string FormatCsvFloat(float value)
+    {
+        return value.ToString("0.#########", CultureInfo.InvariantCulture);
+    }
+
+    private static string CsvRow(params string[] values)
+    {
+        return string.Join(",", values.Select(CsvCell).ToArray());
+    }
+
+    private static string CsvCell(string value)
+    {
+        value ??= string.Empty;
+        return value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) < 0
+            ? value
+            : "\"" + value.Replace("\"", "\"\"") + "\"";
+    }
+
     private static void LogSpawnDiagnostics(
         RegularCustomerOption selected,
         Quest targetQuest,
@@ -2773,6 +2995,7 @@ internal static class NextCustomerWindow
             targetKind.ToString(),
             targetQuest?.name ?? "-",
             requirement?.requirement?.name ?? "-",
+            IngredientRequirementGenerationSettingsKey(requirement),
             PreviewChapter().ToString(),
             StrictPlanningMode().ToString());
         if (TargetOptionsCache.TryGetValue(key, out string[] cached))
@@ -2807,7 +3030,8 @@ internal static class NextCustomerWindow
             requirement.requirement.name,
             ingredient.name,
             targetQuest.name,
-            PreviewChapter().ToString());
+            PreviewChapter().ToString(),
+            IngredientRequirementGenerationSettingsKey(requirement));
         if (IngredientCompatibilityCache.TryGetValue(cacheKey, out bool cached))
         {
             if (!cached)
@@ -2866,11 +3090,24 @@ internal static class NextCustomerWindow
             IngredientPotentialThresholdField,
             fallback: 0.2f);
         ElementalPotential elementalPotential = ingredient.GetElementalPotential(shortDistancePotential);
-        if (dominantElements.Any(element => elementalPotential.GetPotential(element) >= potentialThreshold))
+        if (dominantElements.Any(element => elementalPotential.GetPotential(element, 0, false) >= potentialThreshold))
             return true;
 
-        reason = $"Target ingredient {ingredient.name} does not match the elemental potential required by {certainIngredient.name} for quest {targetQuest.name}.";
+        reason = $"Target ingredient {ingredient.name} does not match the elemental potential required by {certainIngredient.name} for quest {targetQuest.name}: shortDistance={shortDistancePotential}, threshold={potentialThreshold:0.#########}.";
         return false;
+    }
+
+    private static string IngredientRequirementGenerationSettingsKey(QuestRequirementInQuest requirement)
+    {
+        if (requirement?.requirement is not QuestRequirementCertainIngredient certainIngredient)
+            return "-";
+
+        return string.Join(
+            ":",
+            GetPrivateBool(certainIngredient, IngredientCheckPotentialField, fallback: true).ToString(),
+            GetPrivateBool(certainIngredient, IngredientShortDistancePotentialField, fallback: false).ToString(),
+            GetPrivateFloat(certainIngredient, IngredientPotentialThresholdField, fallback: float.NaN)
+                .ToString("0.#########", CultureInfo.InvariantCulture));
     }
 
     private static ElementType[] EnabledDominantElements(Quest targetQuest, int chapter)

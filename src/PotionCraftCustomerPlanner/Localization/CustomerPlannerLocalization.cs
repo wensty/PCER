@@ -46,6 +46,7 @@ internal static class CustomerPlannerLocalization
             ["details.targetQuest"] = new LocalizedLine("Target quest: {0}", "目标任务：{0}"),
             ["details.logSpawn"] = new LocalizedLine("Log spawn diagnostics", "输出生成诊断"),
             ["details.logWindow"] = new LocalizedLine("Log window diagnostics", "输出窗口诊断"),
+            ["details.exportElementCsv"] = new LocalizedLine("Export element CSV", "导出元素CSV"),
             ["details.moreQuests"] = new LocalizedLine("... and {0} more matching quests", "……以及另外 {0} 个匹配任务"),
             ["details.showMoreQuests"] = new LocalizedLine("Show {0} more quests", "展开另外 {0} 个任务"),
             ["details.showFewerQuests"] = new LocalizedLine("Show fewer quests", "收起任务"),

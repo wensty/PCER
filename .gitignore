@@ -4,6 +4,7 @@ aisrc/
 docs
 Directory.Build.props
 .agents
+misc
 
 # Visual Studio / Rider
 .vs/
@@ -18,7 +19,7 @@ Directory.Build.props
 **/obj/
 artifacts/
 TestResults/
-*.nupkg
+*.nupkg``
 *.snupkg
 
 # Generated symbols and logs

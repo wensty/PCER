@@ -17,6 +17,9 @@ internal static class SimpleRecipeRequirementLogic
     private const int MinimumAmount = 1;
     private const float DistanceStep = 7.2f;
     private const float AdditionalEffectsAllowance = 4.0f;
+    private const float IngredientRequirementAllowance = 1.0f;
+    private const float MainIngredientRequirementAllowance = 0.5f;
+    private const float MainIngredientMultiplier = 1.4f;
     private const float NoSaltsMultiplier = 1.75f;
     private static readonly Dictionary<Quest, float> EffectDistanceAllowanceCache =
         new Dictionary<Quest, float>();
@@ -53,13 +56,14 @@ internal static class SimpleRecipeRequirementLogic
             quest,
             generatedRequirements);
         MaterializeText(simpleRecipeRequirement);
+        RequirementLocalizationDiagnostics.LogGenerated(quest, generatedRequirements, simpleRecipeRequirement);
     }
 
     public static int CalculateMaximumIngredientAmount(
         Quest quest,
         IReadOnlyList<GeneratedQuestRequirement> generatedRequirements)
     {
-        float maximum = EffectDistanceAllowance(quest);
+        float maximum = 0.1f + EffectDistanceAllowance(quest);
         float multiplier = 1.0f;
 
         if (generatedRequirements != null)
@@ -76,6 +80,19 @@ internal static class SimpleRecipeRequirementLogic
                 if (requirement is QuestRequirementsAdditionalEffects)
                 {
                     maximum += AdditionalEffectsAllowance;
+                    continue;
+                }
+
+                if (requirement is QuestRequirementMainIngredient)
+                {
+                    maximum += MainIngredientRequirementAllowance;
+                    multiplier *= MainIngredientMultiplier;
+                    continue;
+                }
+
+                if (requirement is QuestRequirementCertainIngredient)
+                {
+                    maximum += IngredientRequirementAllowance;
                     continue;
                 }
 
@@ -132,7 +149,9 @@ internal static class SimpleRecipeRequirementLogic
         if (!IsSimpleRecipeRequirement(generated) || string.IsNullOrEmpty(value))
             return value;
 
-        return StripBareTextMarker(value.Replace("{0}", LimitText(generated)));
+        string result = StripBareTextMarker(value.Replace("{0}", LimitText(generated)));
+        RequirementLocalizationDiagnostics.LogDisplayed(generated, value, result);
+        return result;
     }
 
     private static string StripBareTextMarker(string value)
@@ -155,19 +174,24 @@ internal static class SimpleRecipeRequirementLogic
             return value.Remove(firstTextIndex, 1);
         }
 
-        if (value[firstTextIndex] != '<')
-            return value;
+        int textAfterPrefixIndex = firstTextIndex;
+        while (textAfterPrefixIndex < value.Length)
+        {
+            while (textAfterPrefixIndex < value.Length && char.IsWhiteSpace(value[textAfterPrefixIndex]))
+                textAfterPrefixIndex++;
 
-        int tagEndIndex = value.IndexOf('>', firstTextIndex);
-        if (tagEndIndex < 0 || tagEndIndex + 1 >= value.Length)
-            return value;
+            if (textAfterPrefixIndex >= value.Length || value[textAfterPrefixIndex] != '<')
+                break;
 
-        int textAfterTagIndex = tagEndIndex + 1;
-        while (textAfterTagIndex < value.Length && char.IsWhiteSpace(value[textAfterTagIndex]))
-            textAfterTagIndex++;
+            int tagEndIndex = value.IndexOf('>', textAfterPrefixIndex);
+            if (tagEndIndex < 0)
+                return value;
 
-        if (textAfterTagIndex < value.Length && value[textAfterTagIndex] == '#')
-            return value.Remove(textAfterTagIndex, 1);
+            textAfterPrefixIndex = tagEndIndex + 1;
+        }
+
+        if (textAfterPrefixIndex < value.Length && value[textAfterPrefixIndex] == '#')
+            return value.Remove(textAfterPrefixIndex, 1);
 
         return value;
     }
@@ -191,7 +215,7 @@ internal static class SimpleRecipeRequirementLogic
                     out string localizedKeyText))
                 return localizedKeyText.Replace("{0}", limit);
 
-            return "#" + key.Replace("{0}", limit);
+            return key.Replace("{0}", limit);
         }
 
         if (ModLocalization.TryGetText(
