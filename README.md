@@ -51,6 +51,12 @@ Current built-in requirements:
 
 Current conflict rules:
 
+- Native Lowlander-2 (maximum two ingredients), Main Ingredient, and Need One
+  Particular Ingredient cannot coexist as a triple. This patch leaves all
+  three pairs compatible and preserves any rejection from the original game.
+  It runs in Extra Requirements and applies regardless of generation order or
+  mandatory/optional assignment, including Planner group validation when both
+  plugins are installed.
 - Broad ingredient-category restrictions conflict with each other, Highlander,
   No Salts, and incompatible particular/main ingredient requirements.
 - Highlander requirements conflict with each other, broad ingredient-category

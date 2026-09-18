@@ -120,6 +120,9 @@ internal static class NextCustomerWindow
         new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
     private static readonly NextCustomerDirector.RandomRequirementRule RandomRequirementRule =
         new NextCustomerDirector.RandomRequirementRule();
+    public static bool ApplyRandomRuleGlobally { get; private set; }
+    internal static NextCustomerDirector.RandomRequirementRule GlobalRandomRule =>
+        ApplyRandomRuleGlobally ? RandomRequirementRule : null;
     private static readonly Dictionary<string, string> RandomRequirementWeightTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -736,7 +739,7 @@ internal static class NextCustomerWindow
         if (!NextCustomerDirector.TryGenerateRandomRequirements(
                 targetQuest,
                 CurrentChapter(),
-                RandomRequirementRule,
+                StrictPlanningMode() ? GlobalRandomRule ?? NextCustomerDirector.RandomRequirementRule.Default : RandomRequirementRule,
                 out IReadOnlyList<GeneratedQuestRequirement> generatedMandatory,
                 out IReadOnlyList<GeneratedQuestRequirement> generatedOptional,
                 out reason))
@@ -923,28 +926,17 @@ internal static class NextCustomerWindow
     {
         DrawWindowTitle(T("window.randomRuleTitle"), randomRuleWindowRect.width);
         GUILayout.Label(T("randomRule.description"));
+        bool wasEnabled = GUI.enabled;
+        GUI.enabled = wasEnabled && GlobalRequirementGenerationPatch.IsInstalled;
+        ApplyRandomRuleGlobally = GUILayout.Toggle(ApplyRandomRuleGlobally, T("randomRule.applyGlobally"));
+        GUI.enabled = wasEnabled;
+        GUILayout.Label(T("randomRule.globalHint"), new GUIStyle(GUI.skin.label) { wordWrap = true });
         GUILayout.Label(T("randomRule.weightHint"));
 
         SyncRandomRuleChanceDefaults();
         randomRuleScroll = GUILayout.BeginScrollView(randomRuleScroll, false, true);
-        DrawRandomChanceSection(
-            T("randomRule.mandatoryChances"),
-            isMandatoryRequirements: true,
-            () => RandomRequirementRule.OverrideMandatorySpawnChances,
-            value => RandomRequirementRule.OverrideMandatorySpawnChances = value,
-            value => RandomRequirementRule.MandatoryFirstChance = value,
-            () => RandomRequirementRule.MandatoryFirstChance,
-            value => RandomRequirementRule.MandatorySecondChance = value,
-            () => RandomRequirementRule.MandatorySecondChance);
-        DrawRandomChanceSection(
-            T("randomRule.optionalChances"),
-            isMandatoryRequirements: false,
-            () => RandomRequirementRule.OverrideOptionalSpawnChances,
-            value => RandomRequirementRule.OverrideOptionalSpawnChances = value,
-            value => RandomRequirementRule.OptionalFirstChance = value,
-            () => RandomRequirementRule.OptionalFirstChance,
-            value => RandomRequirementRule.OptionalSecondChance = value,
-            () => RandomRequirementRule.OptionalSecondChance);
+        DrawRandomChanceSection(T("randomRule.mandatoryChances"), true);
+        DrawRandomChanceSection(T("randomRule.optionalChances"), false);
 
         GUILayout.Space(U(8f));
         DrawRequirementCategoryHeader(T("randomRule.weightMultipliers"));
@@ -976,54 +968,54 @@ internal static class NextCustomerWindow
         if (settings == null)
             return;
 
-        (int mandatoryFirst, int mandatorySecond) =
-            settings.GetSpawnChances(CurrentChapter(), isMandatoryRequirements: true);
-        if (!RandomRequirementRule.OverrideMandatorySpawnChances)
-        {
-            RandomRequirementRule.MandatoryFirstChance = mandatoryFirst;
-            RandomRequirementRule.MandatorySecondChance = mandatorySecond;
-        }
+        SyncSide(true);
+        SyncSide(false);
 
-        (int optionalFirst, int optionalSecond) =
-            settings.GetSpawnChances(CurrentChapter(), isMandatoryRequirements: false);
-        if (!RandomRequirementRule.OverrideOptionalSpawnChances)
+        void SyncSide(bool mandatory)
         {
-            RandomRequirementRule.OptionalFirstChance = optionalFirst;
-            RandomRequirementRule.OptionalSecondChance = optionalSecond;
+            if (mandatory ? RandomRequirementRule.OverrideMandatorySpawnChances : RandomRequirementRule.OverrideOptionalSpawnChances)
+                return;
+            var chances = settings.GetSpawnChances(CurrentChapter(), mandatory);
+            List<int> slots = mandatory ? RandomRequirementRule.MandatorySlotChances : RandomRequirementRule.OptionalSlotChances;
+            slots.Clear();
+            slots.Add(chances.Item1);
+            slots.Add(chances.Item2);
         }
     }
 
-    private static void DrawRandomChanceSection(
-        string title,
-        bool isMandatoryRequirements,
-        Func<bool> getOverrideChances,
-        Action<bool> setOverrideChances,
-        Action<int> setFirst,
-        Func<int> getFirst,
-        Action<int> setSecond,
-        Func<int> getSecond)
+    private static void DrawRandomChanceSection(string title, bool mandatory)
     {
         DrawRequirementCategoryHeader(title);
-        QuestRequirementDifficultySettings settings =
-            Settings<GameDifficultyQuestRequirements>.Asset?.GetCurrentValue();
-        (int nativeFirst, int nativeSecond) = settings == null
-            ? (0, 0)
-            : settings.GetSpawnChances(CurrentChapter(), isMandatoryRequirements);
-        bool overrideChances = GUILayout.Toggle(
-            getOverrideChances(),
-            T("randomRule.overrideChances", nativeFirst, nativeSecond));
-        setOverrideChances(overrideChances);
+        bool overridden = mandatory ? RandomRequirementRule.OverrideMandatorySpawnChances : RandomRequirementRule.OverrideOptionalSpawnChances;
+        overridden = GUILayout.Toggle(overridden, T("randomRule.overrideSlots"));
+        if (mandatory)
+            RandomRequirementRule.OverrideMandatorySpawnChances = overridden;
+        else
+            RandomRequirementRule.OverrideOptionalSpawnChances = overridden;
+        List<int> slots = mandatory ? RandomRequirementRule.MandatorySlotChances : RandomRequirementRule.OptionalSlotChances;
         bool oldEnabled = GUI.enabled;
-        GUI.enabled = oldEnabled && overrideChances;
+        GUI.enabled = oldEnabled && overridden;
+        int remove = -1;
+        for (int i = 0; i < slots.Count; i++)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(T("randomRule.slotChance", i + 1), Width(280f));
+            slots[i] = IntField(slots[i], 0, 100, Width(90f));
+            if (GUILayout.Button(T("randomRule.removeSlot"), Width(110f)))
+                remove = i;
+            GUILayout.EndHorizontal();
+        }
+        if (remove >= 0)
+            slots.RemoveAt(remove);
         GUILayout.BeginHorizontal();
-        GUILayout.Label(T("randomRule.firstChance"), Width(220f));
-        setFirst(IntField(getFirst(), 0, 100, Width(90f)));
-        GUILayout.Space(U(20f));
-        GUILayout.Label(T("randomRule.secondChance"), Width(240f));
-        setSecond(IntField(getSecond(), 0, 100, Width(90f)));
-        GUILayout.FlexibleSpace();
+        if (GUILayout.Button(T("randomRule.addSlot"), Width(180f)))
+            slots.Add(100);
+        if (GUILayout.Button(T("randomRule.clearSlots"), Width(180f)))
+            slots.Clear();
         GUILayout.EndHorizontal();
         GUI.enabled = oldEnabled;
+        var range = RequirementSlotRules.Range(slots);
+        GUILayout.Label(T("randomRule.slotRange", slots.Count, range.Min, range.Max));
     }
 
     private static void DrawRandomWeightRow(QuestRequirementInQuest requirement)
@@ -1040,7 +1032,7 @@ internal static class NextCustomerWindow
                 : "1";
         string edited = GUILayout.TextField(text, Width(110f));
         RandomRequirementWeightTexts[name] = edited;
-        if (float.TryParse(edited, out float parsed))
+        if (float.TryParse(edited, out float parsed) && !float.IsNaN(parsed) && !float.IsInfinity(parsed))
         {
             if (Mathf.Approximately(parsed, 1f))
                 RandomRequirementRule.RequirementWeightMultipliers.Remove(name);
@@ -1057,6 +1049,7 @@ internal static class NextCustomerWindow
 
     private static void ResetRandomRule()
     {
+        ApplyRandomRuleGlobally = false;
         RandomRequirementRule.OverrideMandatorySpawnChances = false;
         RandomRequirementRule.OverrideOptionalSpawnChances = false;
         RandomRequirementRule.RequirementWeightMultipliers.Clear();
@@ -3487,6 +3480,39 @@ internal static class NextCustomerWindow
         RequirementLimitInfo limits = CurrentRequirementLimits();
         int mandatory = SelectedRequirementCount(RequirementSelection.Mandatory);
         int optional = SelectedRequirementCount(RequirementSelection.Optional);
+        return AreRequirementCountsAllowed(mandatory, optional, limits, out reason);
+    }
+
+    internal static bool ArePlanCountsAllowed(PlannedCustomer plan, out string reason)
+    {
+        reason = string.Empty;
+        if (plan == null || !GlobalRequirementGenerationPatch.IsInstalled)
+        {
+            reason = "Requirement generation hook or plan is unavailable.";
+            return false;
+        }
+        if (!plan.StrictPlanningMode)
+            return true;
+        if (Settings<GameDifficultyQuestRequirements>.Asset?.GetCurrentValue() == null)
+        {
+            reason = "Quest requirement difficulty settings are not ready.";
+            return false;
+        }
+        try
+        {
+            return AreRequirementCountsAllowed(plan.MandatoryRequirements.Count,
+                plan.OptionalRequirements.Count, CurrentRequirementLimits(strict: true, failOnUnavailable: true), out reason);
+        }
+        catch (Exception exception)
+        {
+            reason = "Cannot read global requirement limits: " + exception.Message;
+            return false;
+        }
+    }
+
+    private static bool AreRequirementCountsAllowed(int mandatory, int optional,
+        RequirementLimitInfo limits, out string reason)
+    {
         if (mandatory > limits.MaxMandatory)
         {
             reason = $"Too many mandatory requirements selected ({mandatory}; allowed {limits.MandatoryRangeText}).";
@@ -4105,90 +4131,45 @@ internal static class NextCustomerWindow
         return selection;
     }
 
-    private static RequirementLimitInfo CurrentRequirementLimits()
+    private static RequirementLimitInfo CurrentRequirementLimits(bool? strict = null, bool failOnUnavailable = false)
     {
-        if (!StrictPlanningMode())
+        if (!(strict ?? StrictPlanningMode()))
             return new RequirementLimitInfo(
                 minMandatory: 0,
-                maxMandatory: 4,
+                maxMandatory: int.MaxValue,
                 minOptional: 0,
-                maxOptional: 4,
+                maxOptional: int.MaxValue,
                 minTotal: 0,
-                maxTotal: 4);
+                maxTotal: int.MaxValue);
 
         try
         {
             QuestRequirementDifficultySettings settings =
                 Settings<GameDifficultyQuestRequirements>.Asset?.GetCurrentValue();
             if (settings == null)
-                return new RequirementLimitInfo(
-                    minMandatory: 0,
-                    maxMandatory: 4,
-                    minOptional: 0,
-                    maxOptional: 4,
-                    minTotal: 0,
-                    maxTotal: 4);
+                throw new InvalidOperationException("Quest requirement difficulty settings are not ready.");
 
-            int chapter = PreviewChapter();
-            RequirementSlotRange nativeMandatory =
-                PossibleRequirementSlots(settings.GetSpawnChances(chapter, isMandatoryRequirements: true));
-            RequirementSlotRange nativeOptional =
-                PossibleRequirementSlots(settings.GetSpawnChances(chapter, isMandatoryRequirements: false));
+            int chapter = CurrentChapter();
+            NextCustomerDirector.RandomRequirementRule effectiveRule =
+                GlobalRandomRule ?? NextCustomerDirector.RandomRequirementRule.Default;
             QuestRequirementsModeConversionType mode = settings.GetModeConversionType();
-            int minTotal = nativeMandatory.Min + nativeOptional.Min;
-            int maxTotal = nativeMandatory.Max + nativeOptional.Max;
-            if (mode == QuestRequirementsModeConversionType.ConvertAllToMandatory)
-            {
-                return new RequirementLimitInfo(
-                    minMandatory: minTotal,
-                    maxMandatory: maxTotal,
-                    minOptional: 0,
-                    maxOptional: 0,
-                    minTotal: minTotal,
-                    maxTotal: maxTotal);
-            }
-
-            if (mode == QuestRequirementsModeConversionType.ConvertAllToOptional)
-            {
-                return new RequirementLimitInfo(
-                    minMandatory: 0,
-                    maxMandatory: 0,
-                    minOptional: minTotal,
-                    maxOptional: maxTotal,
-                    minTotal: minTotal,
-                    maxTotal: maxTotal);
-            }
-
+            var ranges = RequirementSlotRules.ConvertedRanges(
+                effectiveRule.GetSpawnChances(settings, chapter, true),
+                effectiveRule.GetSpawnChances(settings, chapter, false),
+                mode == QuestRequirementsModeConversionType.ConvertAllToMandatory,
+                mode == QuestRequirementsModeConversionType.ConvertAllToOptional);
             return new RequirementLimitInfo(
-                minMandatory: nativeMandatory.Min,
-                maxMandatory: nativeMandatory.Max,
-                minOptional: nativeOptional.Min,
-                maxOptional: nativeOptional.Max,
-                minTotal: minTotal,
-                maxTotal: maxTotal);
+                ranges.Mandatory.Min, ranges.Mandatory.Max,
+                ranges.Optional.Min, ranges.Optional.Max,
+                ranges.Mandatory.Min + ranges.Optional.Min,
+                ranges.Mandatory.Max + ranges.Optional.Max);
         }
         catch
         {
-            return new RequirementLimitInfo(
-                minMandatory: 0,
-                maxMandatory: 4,
-                minOptional: 0,
-                maxOptional: 4,
-                minTotal: 0,
-                maxTotal: 4);
+            if (failOnUnavailable)
+                throw;
+            return new RequirementLimitInfo(0, 0, 0, 0, 0, 0);
         }
-    }
-
-    private static RequirementSlotRange PossibleRequirementSlots((int, int) spawnChances)
-    {
-        if (spawnChances.Item1 <= 0)
-            return new RequirementSlotRange(min: 0, max: 0);
-
-        int max = spawnChances.Item2 > 0 ? 2 : 1;
-        int min = spawnChances.Item1 >= 100 ? 1 : 0;
-        if (min == 1 && spawnChances.Item2 >= 100)
-            min = 2;
-        return new RequirementSlotRange(min, max);
     }
 
     private static bool StrictPlanningMode()
@@ -4319,6 +4300,8 @@ internal static class NextCustomerWindow
 
         private static string RangeText(int min, int max)
         {
+            if (max == int.MaxValue)
+                return "∞";
             return min > 0 ? $"{min}..{max}" : max.ToString();
         }
     }
@@ -4418,17 +4401,7 @@ internal static class NextCustomerWindow
         }
     }
 
-    private readonly struct RequirementSlotRange
-    {
-        public int Min { get; }
-        public int Max { get; }
 
-        public RequirementSlotRange(int min, int max)
-        {
-            Min = Math.Max(0, min);
-            Max = Math.Max(Min, max);
-        }
-    }
 
     private readonly struct QuestRowLayout
     {

@@ -79,6 +79,8 @@ internal static class NextCustomerDirector
 
     public static ScheduleResult Schedule(PlannedCustomer plan)
     {
+        if (!NextCustomerWindow.ArePlanCountsAllowed(plan, out string countReason))
+            return ScheduleResult.Blocked(countReason);
         if (!CustomerPatchInstaller.EnsurePatched(logger))
         {
             logger?.LogWarning("Cannot schedule next customer because spawn patches could not be installed.");
@@ -410,6 +412,8 @@ internal static class NextCustomerDirector
         out string reason)
     {
         reason = string.Empty;
+        if (!NextCustomerWindow.ArePlanCountsAllowed(plan, out reason))
+            return false;
         if (plan == null)
         {
             reason = "No plan is selected.";
@@ -696,7 +700,8 @@ internal static class NextCustomerDirector
         RandomRequirementRule randomRule,
         out IReadOnlyList<GeneratedQuestRequirement> mandatoryRequirements,
         out IReadOnlyList<GeneratedQuestRequirement> optionalRequirements,
-        out string reason)
+        out string reason,
+        bool validateGeneratedGroup = true)
     {
         mandatoryRequirements = new List<GeneratedQuestRequirement>();
         optionalRequirements = new List<GeneratedQuestRequirement>();
@@ -808,7 +813,7 @@ internal static class NextCustomerDirector
         }
 
         List<GeneratedQuestRequirement> combined = nativeMandatory.Concat(nativeOptional).ToList();
-        if (!AllGeneratedRequirementsValid(targetQuest, combined, out reason))
+        if (validateGeneratedGroup && !AllGeneratedRequirementsValid(targetQuest, combined, out reason))
             return false;
 
         mandatoryRequirements = CloneGeneratedRequirements(nativeMandatory);
@@ -984,7 +989,8 @@ internal static class NextCustomerDirector
     {
         if (pendingCustomer.TargetQuest == null)
             return;
-        pendingCustomer.TargetQuest.ApplyPartTo(npc, npc.settings);
+        using (GlobalRequirementGenerationPatch.SuppressGeneration())
+            pendingCustomer.TargetQuest.ApplyPartTo(npc, npc.settings);
     }
 
     private static int RemoveAppliedAppointments()
@@ -1196,7 +1202,8 @@ internal static class NextCustomerDirector
     {
         return scheduledCustomers
             .Where(plan => !appliedAppointments.Contains(plan))
-            .FirstOrDefault(plan => IsPlanCustomer(plan, npc));
+            .FirstOrDefault(plan => IsPlanCustomer(plan, npc)
+                && NextCustomerWindow.ArePlanCountsAllowed(plan, out _));
     }
 
     private static PlannedCustomer FirstCurrentRebuildPlan(NpcMonoBehaviour current, NpcManager npcManager)
@@ -1204,6 +1211,8 @@ internal static class NextCustomerDirector
         foreach (PlannedCustomer plan in scheduledCustomers)
         {
             if (appliedAppointments.Contains(plan))
+                continue;
+            if (!NextCustomerWindow.ArePlanCountsAllowed(plan, out _))
                 continue;
             if (!CanRebuildCurrentNpcForPlan(current, plan, out _))
                 continue;
@@ -1324,7 +1333,8 @@ internal static class NextCustomerDirector
         current.faction = PendingFaction();
         current.factionClass = PendingFactionClass();
         current.questsOnCooldown = clonedQuestsOnCooldown;
-        pendingCustomer.Customer.Template.ApplyToNpcMonoBehaviour(current, parts);
+        using (GlobalRequirementGenerationPatch.SuppressGeneration())
+            pendingCustomer.Customer.Template.ApplyToNpcMonoBehaviour(current, parts);
         current.trading.SetPotionOfferedTimesCount(serialized.potionOfferedTimesCount, updateMood: false);
         current.SetMood(serialized.npcMood);
         current.transform.localPosition = localPosition;
@@ -1340,22 +1350,20 @@ internal static class NextCustomerDirector
         if (npc.currentQuest == null)
             return;
 
-        bool hasMandatory = pendingCustomer.MandatoryRequirements.Count > 0;
-        bool hasOptional = pendingCustomer.OptionalRequirements.Count > 0;
-        if (!hasMandatory && !hasOptional)
-            return;
-
+        // A plan describes the complete edited group, including empty sides.
+        // ApplyPartTo ran with random generation suppressed. Empty selections
+        // must stay empty rather than asking the native generator to fill them.
         RequirementGenerationResult generated = TryGenerateRequirementGroup(
             npc.currentQuest,
-            hasMandatory ? pendingCustomer.MandatoryRequirements : new List<PlannedRequirement>(),
-            hasOptional ? pendingCustomer.OptionalRequirements : new List<PlannedRequirement>(),
-            hasMandatory ? null : npc.mandatoryQuestRequirements,
-            hasOptional ? null : npc.optionalQuestRequirements);
+            pendingCustomer.MandatoryRequirements,
+            pendingCustomer.OptionalRequirements,
+            preservedMandatory: null,
+            preservedOptional: null);
 
         if (!generated.Success)
         {
             logger?.LogWarning(
-                "Scheduled requirement group was blocked by the spawned quest; keeping native generated requirements. "
+                "Planned requirement group was blocked by the quest; no native fallback was generated. "
                 + $"quest={npc.currentQuest?.name ?? "-"}; "
                 + $"mandatory={pendingCustomer.MandatoryRequirements.Count}; "
                 + $"optional={pendingCustomer.OptionalRequirements.Count}; "
@@ -1571,14 +1579,13 @@ internal static class NextCustomerDirector
         if (Managers.Tutorial != null && Managers.Tutorial.IsTutorialActive())
             return result;
 
-        (int firstChancePercent, int secondChancePercent) =
-            randomRule.GetSpawnChances(settings, chapter, isMandatoryRequirements);
-        if (UnityEngine.Random.value >= firstChancePercent / 100f)
-            return result;
-
-        TryAddRandomNativeRequirement(quest, randomRule, allCandidates, allGenerated, result, isMandatoryRequirementTexts);
-        if (UnityEngine.Random.value < secondChancePercent / 100f)
+        foreach (int slot in RequirementSlotRules.RollSlots(
+            randomRule.GetSpawnChances(settings, chapter, isMandatoryRequirements), () => UnityEngine.Random.value))
+        {
+            if (allCandidates.Count == 0)
+                break;
             TryAddRandomNativeRequirement(quest, randomRule, allCandidates, allGenerated, result, isMandatoryRequirementTexts);
+        }
         return result;
     }
 
@@ -1712,7 +1719,7 @@ internal static class NextCustomerDirector
         yield return entries.OrderByDescending(IsNoSaltsEntry)
             .ThenBy(entry => entry.IsMandatory ? 0 : 1)
             .ToList();
-        if (entries.Count <= 7)
+        if (entries.Count <= 5)
         {
             foreach (List<RequirementGenerationEntry> permutation in Permutations(entries.ToList(), 0))
                 yield return permutation;
@@ -2009,32 +2016,27 @@ internal static class NextCustomerDirector
     public sealed class RandomRequirementRule
     {
         public bool OverrideMandatorySpawnChances { get; set; }
-        public int MandatoryFirstChance { get; set; }
-        public int MandatorySecondChance { get; set; }
+        public List<int> MandatorySlotChances { get; } = new List<int>();
         public bool OverrideOptionalSpawnChances { get; set; }
-        public int OptionalFirstChance { get; set; }
-        public int OptionalSecondChance { get; set; }
+        public List<int> OptionalSlotChances { get; } = new List<int>();
         public Dictionary<string, float> RequirementWeightMultipliers { get; } =
             new Dictionary<string, float>(System.StringComparer.OrdinalIgnoreCase);
 
         public static RandomRequirementRule Default => new RandomRequirementRule();
 
-        public (int, int) GetSpawnChances(
+        public bool HasOverrides => OverrideMandatorySpawnChances
+            || OverrideOptionalSpawnChances || RequirementWeightMultipliers.Count > 0;
+
+        public IReadOnlyList<int> GetSpawnChances(
             QuestRequirementDifficultySettings settings,
             int chapter,
             bool isMandatoryRequirements)
         {
+            bool overridden = isMandatoryRequirements ? OverrideMandatorySpawnChances : OverrideOptionalSpawnChances;
+            if (overridden)
+                return isMandatoryRequirements ? MandatorySlotChances : OptionalSlotChances;
             (int first, int second) native = settings.GetSpawnChances(chapter, isMandatoryRequirements);
-            if (isMandatoryRequirements)
-            {
-                return OverrideMandatorySpawnChances
-                    ? (ClampPercent(MandatoryFirstChance), ClampPercent(MandatorySecondChance))
-                    : native;
-            }
-
-            return OverrideOptionalSpawnChances
-                ? (ClampPercent(OptionalFirstChance), ClampPercent(OptionalSecondChance))
-                : native;
+            return new[] { native.first, native.second };
         }
 
         public float GetWeight(QuestRequirementInQuest requirement)
@@ -2049,10 +2051,6 @@ internal static class NextCustomerDirector
             return weight;
         }
 
-        private static int ClampPercent(int value)
-        {
-            return Mathf.Clamp(value, 0, 100);
-        }
     }
 
     public readonly struct ScheduleResult

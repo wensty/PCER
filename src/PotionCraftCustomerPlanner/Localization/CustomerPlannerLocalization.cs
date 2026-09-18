@@ -105,20 +105,29 @@ internal static class CustomerPlannerLocalization
             ["schedule.more"] = new LocalizedLine("... and {0} more scheduled entries", "……以及另外 {0} 个预约项"),
 
             ["randomRule.description"] = new LocalizedLine(
-                "Override used only by this mod's Random preview; it does not change native game spawning.",
-                "覆盖项仅用于本模组的随机预览；不会改变游戏原生生成。"),
+                "Non-strict preview uses these rules. Strict preview follows active global rules (native rules when global is off).",
+                "非严格随机预览使用此处规则；严格预览遵循生效的全局规则（全局关闭时为原生规则）。"),
+            ["randomRule.applyGlobally"] = new LocalizedLine(
+                "Apply rules globally to game-generated customers (this session)",
+                "将规则全局应用于系统生成的顾客（本次运行）"),
+            ["randomRule.globalHint"] = new LocalizedLine(
+                "Add or remove slots freely. A failed slot roll stops that source. Empty overridden lists generate zero random requirements. Difficulty conversion still applies; candidates may run out. Fixed quest lists and tutorial behavior are preserved.",
+                "可增删任意数量槽位；某槽概率未命中则停止该来源后续抽取。覆盖后空列表代表零条随机要求。保留难度转换、任务固定列表和教程规则；候选不足时可能少于配置数量。"),
+            ["randomRule.overrideSlots"] = new LocalizedLine("Override source slots", "覆盖此来源的槽位配置"),
+            ["randomRule.slotChance"] = new LocalizedLine("Slot {0} conditional chance %", "槽位 {0} 条件概率 %"),
+            ["randomRule.addSlot"] = new LocalizedLine("Add slot", "增加槽位"),
+            ["randomRule.removeSlot"] = new LocalizedLine("Remove", "移除"),
+            ["randomRule.clearSlots"] = new LocalizedLine("Zero slots", "清空槽位（零条）"),
+            ["randomRule.slotRange"] = new LocalizedLine("{0} slots; configured range {1}–{2} before conversion", "{0} 个槽位；转换前配置范围 {1}–{2}"),
             ["randomRule.weightHint"] = new LocalizedLine(
                 "Unset weight multipliers behave as 1.0 and keep the native requirement weight.",
                 "未设置的权重倍率按 1.0 处理，保留原生需求权重。"),
-            ["randomRule.mandatoryChances"] = new LocalizedLine("Mandatory requirement chances", "强制需求概率"),
-            ["randomRule.optionalChances"] = new LocalizedLine("Optional requirement chances", "可选需求概率"),
+            ["randomRule.mandatoryChances"] = new LocalizedLine("Mandatory-source slots (before difficulty conversion)", "强制来源槽位（难度转换前）"),
+            ["randomRule.optionalChances"] = new LocalizedLine("Optional-source slots (before difficulty conversion)", "可选来源槽位（难度转换前）"),
             ["randomRule.weightMultipliers"] = new LocalizedLine("Requirement weight multipliers", "需求权重倍率"),
             ["randomRule.noCache"] = new LocalizedLine("No requirement cache yet. Click Refresh List in the main window.", "尚无需求缓存。请在主窗口点击刷新列表。"),
             ["randomRule.reset"] = new LocalizedLine("Reset random rule", "重置随机规则"),
             ["randomRule.close"] = new LocalizedLine("Close", "关闭"),
-            ["randomRule.overrideChances"] = new LocalizedLine("Override native chances (native {0}% / {1}%)", "覆盖原生概率（原生 {0}% / {1}%）"),
-            ["randomRule.firstChance"] = new LocalizedLine("First requirement chance %", "第一个需求概率 %"),
-            ["randomRule.secondChance"] = new LocalizedLine("Second requirement chance %", "第二个需求概率 %"),
             ["randomRule.nativeWeight"] = new LocalizedLine("native weight {0}", "原生权重 {0}"),
             ["randomRule.resetOne"] = new LocalizedLine("Reset", "重置"),
 

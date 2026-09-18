@@ -58,6 +58,52 @@ quests` button to expand the list.
   the panel like an import, so you can inspect or edit the result. If you want
   to unlock it and randomize freely again, click `Unlock Target`.
 
+### Global random requirement rules
+
+Open `Edit random rule` and enable `Apply rules globally to game-generated
+customers (this session)` to use the same chance overrides and requirement
+weight multipliers for subsequent game requirement generation. This applies
+without opening the planner or scheduling customers, and uses the real save
+chapter and difficulty, not the planner's preview chapter override. Existing
+generated customers are not rewritten; already-generated waiting customers may
+therefore retain their old requirements. The hook covers all quests that use
+the game's requirement generator, including repeatable story quests.
+
+The switch defaults to off. The switch and rules are session-only, survive
+closing the window and switching saves, and reset on restarting the game.
+`Reset random rule` also disables the switch. With no rule overrides the native
+generator is left in control. Tutorial suppression, fixed quest requirement
+lists, chapter unlocks, compatibility checks, and difficulty mode conversion
+are preserved. Errors fall back to native generation and are logged.
+
+Each requirement source has an editable list of conditional slot probabilities.
+Enable `Override source slots`, then use `Add slot`, `Remove`, or `Zero slots`.
+A failed probability check stops the remaining slots of that source. An empty
+overridden list generates zero random requirements for that source; it does not
+fall back to native probabilities. Unchecked overrides use the native two slots.
+Weight multipliers select requirements; they do not change the number of slots.
+Candidate exhaustion and compatibility can reduce the actual result.
+
+For example, configure three 100% mandatory-source slots and three 100%
+optional-source slots, then enable the global switch. The game attempts up to
+six requirements. In all-mandatory difficulty, all six use mandatory text and
+land in the mandatory list. Configure zero slots for both sources to request no
+random requirements, including in Suffering. Fixed quest lists remain fixed.
+
+Strict mode uses the active global configuration for manual planning, random
+preview and application of queued plans. If the global switch is off, strict
+mode follows native difficulty. Non-strict manual plans have no artificial
+count limit; non-strict random preview uses the rule editor even with the global
+switch off. The editor shows `∞` for unrestricted manual counts.
+
+Forced plans bypass native requirement generation, including an explicitly empty
+plan. Closing the planner does not disable global generation. Read/load rebuilds
+NPCs from seeds using the rules active at that time; session rules and manual
+overrides are not permanently stored in the save.
+
+See [the investigation](requirement-generation-investigation.md) for the native
+limits, implementation entry points and validation details.
+
 ### Editing planned requirements
 
 The right column edits extra requirements for the current plan.
@@ -66,6 +112,11 @@ The right column edits extra requirements for the current plan.
 - `Reset Config` clears selected requirements and targets.
 - `None`, `Must`, and `Can` choose whether a requirement is absent, mandatory,
   or optional.
+- Applying a plan replaces both requirement lists. An empty side clears that
+  side rather than retaining requirements generated while applying the quest.
+  Strict mode still rejects plans below the current difficulty's configured
+  minimum; disable strict mode or adjust the global generation probabilities
+  when deliberately planning an empty group.
 - In strict difficulty modes where the game only allows mandatory requirements,
   `Can` is disabled.
 - Editable target fields accept internal names such as `Ingredient.name` or
@@ -150,8 +201,8 @@ base compatibility is left to the final generation/reachability validation,
 matching cases where the game can ask for a base the player has not obtained
 yet. Disable strict mode to use chapter/karma overrides for future-spawnable
 customers; non-strict mode still excludes mechanically impossible customers,
-but ignores current karma blockers and allows up to four total planned
-requirements. Strict mode still lists positive faction spawn chances exactly as
+but ignores current karma blockers and imposes no artificial requirement-count
+limit. Strict count ranges follow active global slots and difficulty conversion. Strict mode still lists positive faction spawn chances exactly as
 the game does, but tiny positive values at or below
 `TinyFactionSpawnChanceThreshold=0.001` are marked as `[tiny chance]` in the
 customer list for newly generated config files. This calls out likely Unity
