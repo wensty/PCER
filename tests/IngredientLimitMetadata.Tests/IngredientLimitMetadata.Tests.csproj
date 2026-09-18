@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/PotionCraftCustomerPlanner/Patches/GlobalRequirementGenerationPatch.cs" Link="GlobalRequirementGenerationPatch.cs" />
+    <Reference Include="0Harmony">
+      <HintPath>$(PotionCraftPath)/BepInEx/core/0Harmony.dll</HintPath>
+    </Reference>
+    <Compile Include="../../src/PotionCraftExtraRequirements/Patches/CurrentCustomerBudgetPatches.cs" Link="CurrentCustomerBudgetPatches.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/CurrentCustomerBudget.cs" Link="CurrentCustomerBudget.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/ConfigurableQuestRequirement.cs" Link="ConfigurableQuestRequirement.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/IngredientLimitModifier.cs" Link="IngredientLimitModifier.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/IngredientLimitRegistry.cs" Link="IngredientLimitRegistry.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/NativeRequirementDefinitions.cs" Link="NativeRequirementDefinitions.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Patches/DynamicRequirementRewardPatches.cs" Link="DynamicRequirementRewardPatches.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/SimpleRecipeReward.cs" Link="SimpleRecipeReward.cs" />
+  </ItemGroup>
+</Project>

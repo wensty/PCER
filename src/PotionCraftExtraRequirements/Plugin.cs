@@ -16,6 +16,7 @@ public sealed class Plugin : BaseUnityPlugin
     {
         RequirementCatalog.Configure(Config);
         BuiltInRequirementDefinitions.Register();
+        NativeRequirementDefinitions.Register();
 
         harmony = new Harmony(PluginGuid);
         PatchStartupFeatures();
@@ -24,8 +25,9 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void PatchStartupFeatures()
     {
-        Logger.LogInfo("Patching requirement pool injection.");
-        harmony.PatchAll(typeof(RequirementPoolPatch));
+        // Install localization before any custom requirements can enter the pool.
+        Logger.LogInfo("Patching mod localization.");
+        harmony.PatchAll(typeof(ModLocalizationPatches));
         Logger.LogInfo("Patching custom requirement unlock chapters.");
         harmony.PatchAll(typeof(RequirementUnlockChapterPatch));
         Logger.LogInfo("Patching native requirement compatibility.");
@@ -33,13 +35,16 @@ public sealed class Plugin : BaseUnityPlugin
         harmony.PatchAll(typeof(NativeIngredientTripleConflictPatch));
         Logger.LogInfo("Patching generated requirement text formatting.");
         harmony.PatchAll(typeof(GeneratedRequirementTextPatches));
-        Logger.LogInfo("Patching mod localization.");
-        harmony.PatchAll(typeof(ModLocalizationPatches));
+        harmony.PatchAll(typeof(DynamicRequirementRewardPatches));
+        harmony.PatchAll(typeof(CurrentCustomerBudgetPatches));
+        Logger.LogInfo("Patching requirement pool injection.");
+        harmony.PatchAll(typeof(RequirementPoolPatch));
         Logger.LogInfo("Startup patches installed.");
     }
 
     private void OnDestroy()
     {
+        CurrentCustomerBudget.Clear();
         harmony?.UnpatchSelf();
     }
 }

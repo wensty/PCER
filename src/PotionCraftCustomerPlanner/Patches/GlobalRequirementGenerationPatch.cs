@@ -14,6 +14,42 @@ internal static class GlobalRequirementGenerationPatch
     private static ManualLogSource logger;
     public static bool IsInstalled { get; private set; }
     private static int suppressionDepth;
+    private static PreparedRequirements preparedRequirements;
+
+    // Replay the native quest-application lifecycle with an already finalized group.
+    // This also lets other mods observe generation without a dependency on their APIs.
+    public static void ApplyPreparedRequirements(Quest quest, NpcMonoBehaviour npc,
+        List<GeneratedQuestRequirement> mandatory, List<GeneratedQuestRequirement> optional)
+    {
+        if (!IsInstalled)
+            throw new InvalidOperationException("Requirement generation hook is unavailable; cannot apply prepared requirements.");
+        var previous = preparedRequirements;
+        preparedRequirements = new PreparedRequirements(quest, npc, mandatory, optional);
+        try
+        {
+            quest.ApplyPartTo(npc, npc.settings);
+        }
+        finally
+        {
+            preparedRequirements = previous;
+        }
+    }
+
+    private sealed class PreparedRequirements
+    {
+        public readonly Quest Quest;
+        public readonly NpcMonoBehaviour Npc;
+        public readonly Tuple<List<GeneratedQuestRequirement>, List<GeneratedQuestRequirement>> Result;
+
+        public PreparedRequirements(Quest quest, NpcMonoBehaviour npc,
+            List<GeneratedQuestRequirement> mandatory, List<GeneratedQuestRequirement> optional)
+        {
+            Quest = quest;
+            Npc = npc;
+            Result = Tuple.Create(mandatory ?? new List<GeneratedQuestRequirement>(),
+                optional ?? new List<GeneratedQuestRequirement>());
+        }
+    }
 
     public static IDisposable SuppressGeneration()
     {
@@ -57,6 +93,13 @@ internal static class GlobalRequirementGenerationPatch
     private static bool Prefix(Quest __instance, NpcMonoBehaviour __0,
         ref Tuple<List<GeneratedQuestRequirement>, List<GeneratedQuestRequirement>> __result)
     {
+        if (preparedRequirements != null
+            && ReferenceEquals(preparedRequirements.Quest, __instance)
+            && ReferenceEquals(preparedRequirements.Npc, __0))
+        {
+            __result = preparedRequirements.Result;
+            return false;
+        }
         // Explicit plans, including empty plans, bypass native random generation
         // independently of the global random-rule switch and difficulty.
         if (suppressionDepth > 0)

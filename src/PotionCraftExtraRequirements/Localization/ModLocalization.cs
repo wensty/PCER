@@ -20,6 +20,8 @@ public static class ModLocalization
         AddPool(
             "quest_condition_can_reaction_" + suffix,
             definition.Texts.OptionalReactions);
+        AddPool("quest_condition_must_reaction_partially_" + suffix, definition.Texts.PartialReactions);
+        AddPool("quest_condition_can_reaction_partially_" + suffix, definition.Texts.PartialReactions);
     }
 
     public static bool Contains(string key)

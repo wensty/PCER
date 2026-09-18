@@ -13,21 +13,22 @@ internal static class NativeIngredientTripleConflictPatch
     [HarmonyPatch(typeof(QuestRequirementMaxIngredients), nameof(QuestRequirementMaxIngredients.IsCompatibleWithOtherRequirements))]
     private static void MaxIngredientsPostfix(QuestRequirementMaxIngredients __instance,
         List<GeneratedQuestRequirement> generatedRequirements, ref bool __result)
-        => Postfix(__instance, generatedRequirements, ref __result);
+        => ApplyConflictRule(__instance, generatedRequirements, ref __result);
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(QuestRequirementMainIngredient), nameof(QuestRequirementMainIngredient.IsCompatibleWithOtherRequirements))]
     private static void MainIngredientPostfix(QuestRequirementMainIngredient __instance,
         List<GeneratedQuestRequirement> generatedRequirements, ref bool __result)
-        => Postfix(__instance, generatedRequirements, ref __result);
+        => ApplyConflictRule(__instance, generatedRequirements, ref __result);
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(QuestRequirementNeedOneParticularIngredient), nameof(QuestRequirementNeedOneParticularIngredient.IsCompatibleWithOtherRequirements))]
     private static void ParticularIngredientPostfix(QuestRequirementNeedOneParticularIngredient __instance,
         List<GeneratedQuestRequirement> generatedRequirements, ref bool __result)
-        => Postfix(__instance, generatedRequirements, ref __result);
+        => ApplyConflictRule(__instance, generatedRequirements, ref __result);
 
-    internal static void Postfix(QuestRequirement __instance,
+    // Harmony recognizes the exact name "Postfix" even without an attribute.
+    internal static void ApplyConflictRule(QuestRequirement __instance,
         List<GeneratedQuestRequirement> generatedRequirements, ref bool __result)
     {
         if (!__result)

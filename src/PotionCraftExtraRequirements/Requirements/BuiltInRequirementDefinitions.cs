@@ -15,9 +15,11 @@ public static class BuiltInRequirementDefinitions
         RegisterCategoryPair("Mushrooms", "mushroom", "蘑菇", InventoryItemType.Mushroom, 7);
         RegisterCategoryPair("Crystals", "crystal", "矿石", InventoryItemType.Crystal, 9);
 
-        RegisterHighlander(1, 3f);
-        RegisterHighlander(2, 2f);
-        RegisterHighlander(3, 1.5f);
+        // Fewer allowed copies make the requirement harder: increase both
+        // its price reward and the Simple Recipe ingredient allowance.
+        RegisterHighlander(3, 1.5f, 1f);
+        RegisterHighlander(2, 2f, 2f);
+        RegisterHighlander(1, 3f, 3f);
 
         RegisterSimpleRecipe();
     }
@@ -54,7 +56,7 @@ public static class BuiltInRequirementDefinitions
             declaredTarget: RequirementTargetMetadata.FixedIngredientCategory(itemType, categoryNameEn)));
     }
 
-    private static void RegisterHighlander(int maximumAmount, float multiplier)
+    private static void RegisterHighlander(int maximumAmount, float multiplier, float ingredientAllowance)
     {
         RequirementCatalog.Register(new RequirementDefinition(
             id: "Highlander" + maximumAmount,
@@ -65,7 +67,10 @@ public static class BuiltInRequirementDefinitions
             costMultiplier: multiplier,
             tags: new[] { HighlanderTag },
             conflictingTags: new[] { HighlanderTag, BroadCategoryTag },
-            popularityBonus: maximumAmount >= 2 ? 1 : 2));
+            popularityBonus: maximumAmount >= 2 ? 1 : 2)
+        {
+            IngredientLimitModifier = _ => new IngredientLimitModifier(ingredientAllowance)
+        });
     }
 
     private static void RegisterSimpleRecipe()
@@ -79,7 +84,13 @@ public static class BuiltInRequirementDefinitions
             tags: new[] { SimpleRecipeTag },
             conflictingTags: new[] { BroadCategoryTag },
             canGenerate: SimpleRecipeRequirementLogic.CanGenerate,
-            popularityBonus: 2));
+            popularityBonus: 1)
+        {
+            DefaultEnhancedCostMultiplier = 3f,
+            DynamicCostMultiplier = SimpleRecipeRequirementLogic.GetCostMultiplier,
+            DefaultEnhancedPopularityBonus = 2,
+            DynamicPopularityBonus = SimpleRecipeRequirementLogic.GetPopularityBonus
+        });
     }
 
     private static RequirementTexts NoCategoryTexts(string categoryEn, string categoryZh)
@@ -179,7 +190,16 @@ public static class BuiltInRequirementDefinitions
             {
                 L("A pity—the recipe is more complicated than I hoped.", "可惜，这份配方比我希望的更复杂。"),
                 L("I would have preferred no more than {0} ingredients.", "我本来更希望素材总数不超过 {0} 个。")
-            });
+            })
+        {
+            PartialReactions = new[]
+            {
+                L("This will do. But if you could make it with no more than {1} ingredients, I'd gladly pay a little extra.",
+                  "这瓶可以。不过，要是只用 {1} 个以内的素材就能做出来，我愿意再多付些钱。"),
+                L("A fine potion! I'd pay more for one made with just {1} ingredients or fewer.",
+                  "药剂不错！要是用不超过 {1} 个素材就能配出来，我还愿意多付些钱。")
+            }
+        };
     }
 
     private static LocalizedLine L(string en, string zh)

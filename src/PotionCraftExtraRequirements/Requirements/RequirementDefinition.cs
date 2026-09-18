@@ -15,19 +15,29 @@ public sealed class RequirementDefinition
     public int DefaultUnlockChapter { get; }
     public float DefaultSpawnWeight { get; }
     public float DefaultCostMultiplier { get; }
+    // Opt in to a separately configurable full-fulfillment reward tier.
+    public float? DefaultEnhancedCostMultiplier { get; set; }
     public int DefaultPopularityBonus { get; }
+    public int? DefaultEnhancedPopularityBonus { get; set; }
     public IReadOnlyCollection<string> Tags { get; }
     public IReadOnlyCollection<string> ConflictingTags { get; }
     public Func<Potion, Quest, GeneratedQuestRequirement, bool> IsSatisfied { get; }
     public Func<Quest, IReadOnlyList<GeneratedQuestRequirement>, bool> CanGenerate { get; }
     public Func<Ingredient, bool> IsIngredientAllowed { get; }
     public RequirementTargetMetadata DeclaredTarget { get; }
+    // Null means no contribution (+0, x1). Set before registering the definition.
+    public Func<GeneratedQuestRequirement, IngredientLimitModifier> IngredientLimitModifier { get; set; }
+    // Called for completed requirements, with the configured partial-fulfillment multiplier for tiered requirements.
+    public Func<Potion, Quest, GeneratedQuestRequirement, float, float> DynamicCostMultiplier { get; set; }
+    public Func<Potion, Quest, GeneratedQuestRequirement, int, int> DynamicPopularityBonus { get; set; }
 
     internal ConfigEntry<bool> Enabled { get; set; }
     internal ConfigEntry<int> UnlockChapter { get; set; }
     internal ConfigEntry<float> SpawnWeight { get; set; }
     internal ConfigEntry<float> CostMultiplier { get; set; }
+    internal ConfigEntry<float> EnhancedCostMultiplier { get; set; }
     internal ConfigEntry<int> PopularityBonus { get; set; }
+    internal ConfigEntry<int> EnhancedPopularityBonus { get; set; }
 
     public RequirementDefinition(
         string id,
@@ -92,6 +102,7 @@ public enum RequirementTargetMetadataKind
 
 public sealed class RequirementTexts
 {
+    public IReadOnlyList<LocalizedLine> PartialReactions { get; set; } = Array.Empty<LocalizedLine>();
     public IReadOnlyList<LocalizedLine> Mandatory { get; }
     public IReadOnlyList<LocalizedLine> Optional { get; }
     public IReadOnlyList<LocalizedLine> MandatoryReactions { get; }

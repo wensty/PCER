@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using PotionCraft.ManagersSystem.RecipeMap;
-using PotionCraft.LocalizationSystem;
 using PotionCraft.QuestSystem;
 using PotionCraft.ScriptableObjects;
 using PotionCraft.ScriptableObjects.Potion;
@@ -15,12 +14,8 @@ internal static class SimpleRecipeRequirementLogic
 {
     private const string FullRequirementName = "PCER_" + BuiltInRequirementDefinitions.SimpleRecipeId;
     private const int MinimumAmount = 1;
-    private const float DistanceStep = 7.2f;
-    private const float AdditionalEffectsAllowance = 4.0f;
-    private const float IngredientRequirementAllowance = 1.0f;
-    private const float MainIngredientRequirementAllowance = 0.5f;
-    private const float MainIngredientMultiplier = 1.4f;
-    private const float NoSaltsMultiplier = 1.75f;
+    private const float BaseAllowance = 0.2f;
+    private const float DistanceStep = 8.0f;
     private static readonly Dictionary<Quest, float> EffectDistanceAllowanceCache =
         new Dictionary<Quest, float>();
 
@@ -52,10 +47,12 @@ internal static class SimpleRecipeRequirementLogic
         if (simpleRecipeRequirement == null)
             return;
 
-        simpleRecipeRequirement.intValue1 = CalculateMaximumIngredientAmount(
-            quest,
-            generatedRequirements);
-        MaterializeText(simpleRecipeRequirement);
+        float rawMaximum = CalculateRawMaximumIngredientAmount(quest, generatedRequirements);
+        simpleRecipeRequirement.intValue1 = Math.Max(MinimumAmount, Mathf.FloorToInt(rawMaximum));
+        // Keep the unrounded value with the generated requirement, so planner
+        // cloning/snapshots preserve the bonus threshold independently of NPC state.
+        simpleRecipeRequirement.stringValue1 = SimpleRecipeReward.EncodeRawMaximum(rawMaximum);
+        // Text fields remain localization keys; expand live amounts only when displayed.
         RequirementLocalizationDiagnostics.LogGenerated(quest, generatedRequirements, simpleRecipeRequirement);
     }
 
@@ -63,57 +60,52 @@ internal static class SimpleRecipeRequirementLogic
         Quest quest,
         IReadOnlyList<GeneratedQuestRequirement> generatedRequirements)
     {
-        float maximum = 0.1f + EffectDistanceAllowance(quest);
-        float multiplier = 1.0f;
+        return Math.Max(MinimumAmount, Mathf.FloorToInt(CalculateRawMaximumIngredientAmount(quest, generatedRequirements)));
+    }
 
-        if (generatedRequirements != null)
-        {
-            foreach (GeneratedQuestRequirement generated in generatedRequirements)
-            {
-                if (generated?.requirementInQuest?.requirement == null)
-                    continue;
+    public static float CalculateRawMaximumIngredientAmount(
+        Quest quest, IReadOnlyList<GeneratedQuestRequirement> generatedRequirements)
+    {
+        return IngredientLimitModifier.Combine(BaseAllowance + EffectDistanceAllowance(quest),
+            (generatedRequirements ?? Array.Empty<GeneratedQuestRequirement>())
+                .Where(generated => !IsSimpleRecipeRequirement(generated))
+                .Select(IngredientLimitRegistry.Get));
+    }
 
-                QuestRequirement requirement = generated.requirementInQuest.requirement;
-                if (IsSimpleRecipeRequirement(generated))
-                    continue;
+    public static bool IsEfficient(Potion potion, GeneratedQuestRequirement generated)
+    {
+        if (!SimpleRecipeReward.TryReadRawMaximum(generated?.stringValue1, out float rawMaximum))
+            return false;
+        return SimpleRecipeReward.IsEfficient(PotionIngredientFacts.IngredientAmount(potion),
+            Math.Max(MinimumAmount, generated.intValue1), rawMaximum);
+    }
 
-                if (requirement is QuestRequirementsAdditionalEffects)
-                {
-                    maximum += AdditionalEffectsAllowance;
-                    continue;
-                }
+    public static float GetCostMultiplier(Potion potion, Quest quest,
+        GeneratedQuestRequirement generated, float ordinaryMultiplier)
+    {
+        if (!IsEfficient(potion, generated)
+            || !RequirementCatalog.TryGet(generated, out RequirementDefinition definition))
+            return ordinaryMultiplier;
+        return definition.EnhancedCostMultiplier?.Value
+            ?? definition.DefaultEnhancedCostMultiplier ?? ordinaryMultiplier;
+    }
 
-                if (requirement is QuestRequirementMainIngredient)
-                {
-                    maximum += MainIngredientRequirementAllowance;
-                    multiplier *= MainIngredientMultiplier;
-                    continue;
-                }
+    public static bool TryGetEfficiencyThreshold(GeneratedQuestRequirement generated, out int threshold)
+    {
+        threshold = 0;
+        return SimpleRecipeReward.TryReadRawMaximum(generated?.stringValue1, out float rawMaximum)
+            && SimpleRecipeReward.TryGetEfficiencyThreshold(
+                Math.Max(MinimumAmount, generated.intValue1), rawMaximum, out threshold);
+    }
 
-                if (requirement is QuestRequirementCertainIngredient)
-                {
-                    maximum += IngredientRequirementAllowance;
-                    continue;
-                }
-
-                if (requirement.GetType() == typeof(QuestRequirementNoSalts))
-                {
-                    multiplier *= NoSaltsMultiplier;
-                    continue;
-                }
-
-                if (TryGetHighlanderLimit(generated, out int highlanderLimit))
-                {
-                    maximum += highlanderLimit;
-                    continue;
-                }
-
-                if (TryGetLowlanderLimit(generated, out int lowlanderLimit))
-                    multiplier *= LowlanderMultiplier(lowlanderLimit);
-            }
-        }
-
-        return Math.Max(MinimumAmount, Mathf.FloorToInt(maximum * multiplier));
+    public static int GetPopularityBonus(Potion potion, Quest quest,
+        GeneratedQuestRequirement generated, int ordinaryBonus)
+    {
+        if (!IsEfficient(potion, generated)
+            || !RequirementCatalog.TryGet(generated, out RequirementDefinition definition))
+            return ordinaryBonus;
+        return definition.EnhancedPopularityBonus?.Value
+            ?? definition.DefaultEnhancedPopularityBonus ?? ordinaryBonus;
     }
 
     public static bool IsSimpleRecipeRequirement(GeneratedQuestRequirement generated)
@@ -127,21 +119,6 @@ internal static class SimpleRecipeRequirementLogic
             && string.Equals(requirement.name, FullRequirementName, StringComparison.Ordinal);
     }
 
-    private static void MaterializeText(GeneratedQuestRequirement generated)
-    {
-        string limit = LimitText(generated);
-        generated.textMale = MaterializeTextField(generated.textMale, limit);
-        generated.textFemale = MaterializeTextField(generated.textFemale, limit);
-        generated.reactionMale = MaterializeTextField(generated.reactionMale, limit);
-        generated.reactionFemale = MaterializeTextField(generated.reactionFemale, limit);
-        generated.reactionCompletedPartiallyMale = MaterializeTextField(
-            generated.reactionCompletedPartiallyMale,
-            limit);
-        generated.reactionCompletedPartiallyFemale = MaterializeTextField(
-            generated.reactionCompletedPartiallyFemale,
-            limit);
-    }
-
     public static string FormatDisplayedText(
         GeneratedQuestRequirement generated,
         string value)
@@ -149,82 +126,16 @@ internal static class SimpleRecipeRequirementLogic
         if (!IsSimpleRecipeRequirement(generated) || string.IsNullOrEmpty(value))
             return value;
 
-        string result = StripBareTextMarker(value.Replace("{0}", LimitText(generated)));
+        string thresholdText = TryGetEfficiencyThreshold(generated, out int threshold)
+            ? threshold.ToString() : "—";
+        string result = value.Replace("{0}", LimitText(generated)).Replace("{1}", thresholdText);
         RequirementLocalizationDiagnostics.LogDisplayed(generated, value, result);
         return result;
-    }
-
-    private static string StripBareTextMarker(string value)
-    {
-        if (string.IsNullOrEmpty(value))
-            return value;
-
-        int firstTextIndex = 0;
-        while (firstTextIndex < value.Length && char.IsWhiteSpace(value[firstTextIndex]))
-            firstTextIndex++;
-
-        if (firstTextIndex >= value.Length)
-            return value;
-
-        if (value[firstTextIndex] == '#')
-        {
-            if (firstTextIndex + 1 < value.Length && value[firstTextIndex + 1] == '<')
-                return value;
-
-            return value.Remove(firstTextIndex, 1);
-        }
-
-        int textAfterPrefixIndex = firstTextIndex;
-        while (textAfterPrefixIndex < value.Length)
-        {
-            while (textAfterPrefixIndex < value.Length && char.IsWhiteSpace(value[textAfterPrefixIndex]))
-                textAfterPrefixIndex++;
-
-            if (textAfterPrefixIndex >= value.Length || value[textAfterPrefixIndex] != '<')
-                break;
-
-            int tagEndIndex = value.IndexOf('>', textAfterPrefixIndex);
-            if (tagEndIndex < 0)
-                return value;
-
-            textAfterPrefixIndex = tagEndIndex + 1;
-        }
-
-        if (textAfterPrefixIndex < value.Length && value[textAfterPrefixIndex] == '#')
-            return value.Remove(textAfterPrefixIndex, 1);
-
-        return value;
     }
 
     private static string LimitText(GeneratedQuestRequirement generated)
     {
         return Math.Max(MinimumAmount, generated?.intValue1 ?? MinimumAmount).ToString();
-    }
-
-    private static string MaterializeTextField(string value, string limit)
-    {
-        if (string.IsNullOrEmpty(value))
-            return value;
-
-        if (value.StartsWith("#", StringComparison.Ordinal))
-        {
-            string key = value.Substring(1);
-            if (ModLocalization.TryGetText(
-                    key,
-                    LocalizationManager.CurrentLocale,
-                    out string localizedKeyText))
-                return localizedKeyText.Replace("{0}", limit);
-
-            return key.Replace("{0}", limit);
-        }
-
-        if (ModLocalization.TryGetText(
-                value,
-                LocalizationManager.CurrentLocale,
-                out string localizedText))
-            return localizedText.Replace("{0}", limit);
-
-        return value.Replace("{0}", limit);
     }
 
     private static float EffectDistanceAllowance(Quest quest)
@@ -277,63 +188,4 @@ internal static class SimpleRecipeRequirementLogic
             && definition.Tags.Contains(BuiltInRequirementDefinitions.BroadCategoryTag);
     }
 
-    private static bool TryGetHighlanderLimit(
-        GeneratedQuestRequirement generated,
-        out int limit)
-    {
-        limit = 0;
-        QuestRequirement requirement = generated?.requirementInQuest?.requirement;
-        if (requirement == null)
-            return false;
-
-        string requirementName = requirement.name;
-        if (requirementName != null
-            && requirementName.StartsWith("PCER_Highlander", StringComparison.Ordinal))
-        {
-            string suffix = requirementName.Substring("PCER_Highlander".Length);
-            return int.TryParse(suffix, out limit) && limit >= 1 && limit <= 3;
-        }
-
-        return false;
-    }
-
-    private static bool TryGetLowlanderLimit(
-        GeneratedQuestRequirement generated,
-        out int limit)
-    {
-        limit = 0;
-        QuestRequirement requirement = generated?.requirementInQuest?.requirement;
-        if (requirement == null)
-            return false;
-
-        string requirementName = requirement.name;
-        if (requirementName == null)
-            return false;
-
-        string suffix = null;
-        if (requirementName.StartsWith("PCER_Lowlander", StringComparison.Ordinal))
-            suffix = requirementName.Substring("PCER_Lowlander".Length);
-        else if (requirementName.StartsWith("Lowlander", StringComparison.Ordinal))
-            suffix = requirementName.Substring("Lowlander".Length);
-
-        return suffix != null
-            && int.TryParse(suffix, out limit)
-            && limit >= 1
-            && limit <= 3;
-    }
-
-    private static float LowlanderMultiplier(int limit)
-    {
-        switch (limit)
-        {
-            case 1:
-                return 1.6f;
-            case 2:
-                return 1.3f;
-            case 3:
-                return 1.1f;
-            default:
-                return 1.0f;
-        }
-    }
 }

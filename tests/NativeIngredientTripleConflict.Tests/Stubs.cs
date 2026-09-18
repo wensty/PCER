@@ -1,25 +1,17 @@
 // Minimal type shapes for executing the production conflict postfix outside Unity.
-namespace HarmonyLib
-{
-    [System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Method, AllowMultiple = true)]
-    public sealed class HarmonyPatch : System.Attribute
-    {
-        public HarmonyPatch() { }
-        public HarmonyPatch(System.Type type, string method) { }
-    }
-    public sealed class HarmonyPostfix : System.Attribute { }
-}
 namespace PotionCraft.QuestSystem
 {
     public class QuestRequirement
     {
-        public bool IsCompatibleWithOtherRequirements() => true;
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public virtual bool IsCompatibleWithOtherRequirements(List<GeneratedQuestRequirement> generatedRequirements) => true;
     }
-    public class QuestRequirementMainIngredient : QuestRequirement { }
-    public class QuestRequirementNeedOneParticularIngredient : QuestRequirement { }
+    public class QuestRequirementMainIngredient : QuestRequirement { [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)] public override bool IsCompatibleWithOtherRequirements(List<GeneratedQuestRequirement> generatedRequirements) => true; }
+    public class QuestRequirementNeedOneParticularIngredient : QuestRequirement { [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)] public override bool IsCompatibleWithOtherRequirements(List<GeneratedQuestRequirement> generatedRequirements) => true; }
     public class QuestRequirementMaxIngredients : QuestRequirement
     {
         public int maxIngredientsAmount;
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)] public override bool IsCompatibleWithOtherRequirements(List<GeneratedQuestRequirement> generatedRequirements) => true;
     }
     public class QuestRequirementInQuest { public QuestRequirement requirement; }
     public class GeneratedQuestRequirement { public QuestRequirementInQuest requirementInQuest; }

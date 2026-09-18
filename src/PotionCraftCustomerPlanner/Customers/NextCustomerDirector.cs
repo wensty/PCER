@@ -388,10 +388,10 @@ internal static class NextCustomerDirector
                 return false;
             }
 
-            current.currentQuest = snapshot.Quest;
-            current.mandatoryQuestRequirements = CloneGeneratedRequirements(snapshot.MandatoryRequirements);
-            current.optionalQuestRequirements = CloneGeneratedRequirements(snapshot.OptionalRequirements);
             current.chapterOnAddToSpawn = snapshot.ChapterOnAddToSpawn;
+            GlobalRequirementGenerationPatch.ApplyPreparedRequirements(snapshot.Quest, current,
+                CloneGeneratedRequirements(snapshot.MandatoryRequirements),
+                CloneGeneratedRequirements(snapshot.OptionalRequirements));
             ClearPreview();
             logger?.LogInfo($"Preview reverted: {snapshot.Customer.DisplayName}; quest={snapshot.Quest?.name ?? "-"}");
             RefreshDialogueBox();
@@ -1371,8 +1371,8 @@ internal static class NextCustomerDirector
             return;
         }
 
-        npc.mandatoryQuestRequirements = generated.Mandatory;
-        npc.optionalQuestRequirements = generated.Optional;
+        GlobalRequirementGenerationPatch.ApplyPreparedRequirements(npc.currentQuest, npc,
+            generated.Mandatory, generated.Optional);
     }
 
     private static RequirementGenerationResult TryGenerateRequirementGroup(

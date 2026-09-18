@@ -24,12 +24,26 @@ public sealed class ConfigurableQuestRequirement : QuestRequirementNoSalts
 
     public override float GetCostMultiplier(Potion potion, Quest quest)
     {
-        return Definition.CostMultiplier.Value;
+        RequirementDefinition definition = Definition;
+        if (definition.DynamicCostMultiplier != null
+            && CurrentCustomerBudget.TryGet(quest, this, out GeneratedQuestRequirement generated))
+            return generated.IsRequirementCompleted(potion, quest)
+                ? definition.DynamicCostMultiplier(potion, quest, generated, definition.CostMultiplier.Value)
+                : 1f;
+        return definition.EnhancedCostMultiplier?.Value
+            ?? definition.DefaultEnhancedCostMultiplier
+            ?? definition.CostMultiplier.Value;
     }
 
     public override int GetPopularityToAdd(Potion potion, Quest quest)
     {
-        return Definition.PopularityBonus.Value;
+        RequirementDefinition definition = Definition;
+        if (definition.DynamicPopularityBonus != null
+            && CurrentCustomerBudget.TryGet(quest, this, out GeneratedQuestRequirement generated))
+            return generated.IsRequirementCompleted(potion, quest)
+                ? definition.DynamicPopularityBonus(potion, quest, generated, definition.PopularityBonus.Value)
+                : 0;
+        return definition.PopularityBonus.Value;
     }
 
     public override bool IsRequirementCompleted(

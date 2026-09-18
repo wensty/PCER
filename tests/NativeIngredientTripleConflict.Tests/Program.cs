@@ -1,5 +1,10 @@
 using PotionCraftExtraRequirements;
 using PotionCraft.QuestSystem;
+using HarmonyLib;
+
+// Use the game's actual Harmony discovery, including convention-named methods.
+var harmony = new Harmony("pcer.tests.triple-conflict");
+harmony.PatchAll(typeof(NativeIngredientTripleConflictPatch));
 
 var main = new QuestRequirementMainIngredient();
 var particular = new QuestRequirementNeedOneParticularIngredient();
@@ -12,7 +17,11 @@ bool Allowed(QuestRequirement candidate, IEnumerable<QuestRequirement> others, b
     {
         requirementInQuest = new QuestRequirementInQuest { requirement = r }
     }).ToList();
-    NativeIngredientTripleConflictPatch.Postfix(candidate, generated, ref original);
+    NativeIngredientTripleConflictPatch.ApplyConflictRule(candidate, generated, ref original);
+    if (original)
+        Check(candidate.IsCompatibleWithOtherRequirements(generated), "Installed patch rejected valid requirements.");
+    else if (generated.Count >= 2)
+        Check(!candidate.IsCompatibleWithOtherRequirements(generated), "Installed patch missed the conflict.");
     return original;
 }
 void Check(bool value, string message)
@@ -39,3 +48,4 @@ foreach (int limit in new[] { 1, 3, 4 })
 Check(!Allowed(main, Array.Empty<QuestRequirement>(), false), "Native rejection was overwritten.");
 Check(!Allowed(lowlander, new QuestRequirement[] {main, new QuestRequirement(), particular}), "Unrelated requirement hid the triple.");
 Console.WriteLine($"Passed {orders} generation orders, every pair, other caps and native-rejection preservation.");
+harmony.UnpatchSelf();

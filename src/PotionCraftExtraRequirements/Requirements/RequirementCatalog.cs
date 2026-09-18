@@ -33,8 +33,22 @@ public static class RequirementCatalog
         definition.Enabled = config.Bind(section, "Enabled", true, "Whether this requirement can be generated.");
         definition.UnlockChapter = config.Bind(section, "UnlockChapter", definition.DefaultUnlockChapter);
         definition.SpawnWeight = config.Bind(section, "SpawnWeight", definition.DefaultSpawnWeight);
-        definition.CostMultiplier = config.Bind(section, "CostMultiplier", definition.DefaultCostMultiplier);
-        definition.PopularityBonus = config.Bind(section, "PopularityBonus", definition.DefaultPopularityBonus);
+        definition.CostMultiplier = config.Bind(section, "CostMultiplier", definition.DefaultCostMultiplier,
+            definition.DefaultEnhancedCostMultiplier.HasValue
+                ? "Price multiplier for partial fulfillment."
+                : "Price multiplier when this requirement is satisfied.");
+        if (definition.DefaultEnhancedCostMultiplier.HasValue)
+            definition.EnhancedCostMultiplier = config.Bind(section, "EnhancedCostMultiplier",
+                definition.DefaultEnhancedCostMultiplier.Value,
+                "Price multiplier for full fulfillment. Replaces the partial-fulfillment multiplier; does not multiply it again.");
+        definition.PopularityBonus = config.Bind(section, "PopularityBonus", definition.DefaultPopularityBonus,
+            definition.DefaultEnhancedPopularityBonus.HasValue
+                ? "Popularity bonus for partial fulfillment."
+                : "Popularity bonus when this requirement is satisfied.");
+        if (definition.DefaultEnhancedPopularityBonus.HasValue)
+            definition.EnhancedPopularityBonus = config.Bind(section, "EnhancedPopularityBonus",
+                definition.DefaultEnhancedPopularityBonus.Value,
+                "Popularity bonus for full fulfillment. Replaces the partial-fulfillment bonus; does not add to it.");
         Definitions.Add(definition.Id, definition);
         RegistrationOrder.Add(definition);
         ModLocalization.Register(definition);
