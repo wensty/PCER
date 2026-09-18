@@ -10,13 +10,11 @@
     <Reference Include="0Harmony">
       <HintPath>$(PotionCraftPath)/BepInEx/core/0Harmony.dll</HintPath>
     </Reference>
-    <Compile Include="../../src/PotionCraftExtraRequirements/Patches/CurrentCustomerBudgetPatches.cs" Link="CurrentCustomerBudgetPatches.cs" />
     <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/CurrentCustomerBudget.cs" Link="CurrentCustomerBudget.cs" />
     <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/ConfigurableQuestRequirement.cs" Link="ConfigurableQuestRequirement.cs" />
-    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/IngredientLimitModifier.cs" Link="IngredientLimitModifier.cs" />
-    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/IngredientLimitRegistry.cs" Link="IngredientLimitRegistry.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/IngredientLimitMetadata.cs" Link="IngredientLimitMetadata.cs" />
     <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/NativeRequirementDefinitions.cs" Link="NativeRequirementDefinitions.cs" />
     <Compile Include="../../src/PotionCraftExtraRequirements/Patches/DynamicRequirementRewardPatches.cs" Link="DynamicRequirementRewardPatches.cs" />
-    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/SimpleRecipeReward.cs" Link="SimpleRecipeReward.cs" />
+    <Compile Include="../../src/PotionCraftExtraRequirements/Requirements/SimpleRecipeRequirementLogic.cs" Link="SimpleRecipeRequirementLogic.cs" />
   </ItemGroup>
 </Project>

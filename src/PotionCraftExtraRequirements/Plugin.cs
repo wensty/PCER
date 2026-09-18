@@ -34,7 +34,7 @@ public sealed class Plugin : BaseUnityPlugin
         harmony.PatchAll(typeof(NativeRequirementCompatibilityPatches));
         harmony.PatchAll(typeof(NativeIngredientTripleConflictPatch));
         Logger.LogInfo("Patching generated requirement text formatting.");
-        harmony.PatchAll(typeof(GeneratedRequirementTextPatches));
+        harmony.PatchAll(typeof(SimpleRecipePatches));
         harmony.PatchAll(typeof(DynamicRequirementRewardPatches));
         harmony.PatchAll(typeof(CurrentCustomerBudgetPatches));
         Logger.LogInfo("Patching requirement pool injection.");

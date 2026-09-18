@@ -106,7 +106,7 @@ DynamicRequirementRewardPatches.CostBonusesPostfix(potion, quest, group, ref bon
 Check(bonuses.SequenceEqual(new[] {1.5f, 1.75f}), "Partial tier must use its configured value, not the direct-read maximum.");
 string Reaction(string native, bool complete = true)
 {
-    DynamicRequirementRewardPatches.ReactionPostfix(quest, potion,
+    SimpleRecipePatches.ReactionPostfix(quest, potion,
         PotionCraft.Npc.Parts.Settings.Gender.GenderSet.Male, group, new List<bool> {complete, true}, ref native);
     return native;
 }
@@ -138,15 +138,16 @@ var carrier = new ConfigurableQuestRequirement {name = "PCER_SimpleRecipe"};
 var definition = new RequirementDefinition
 {
     Id = "SimpleRecipe", CostMultiplier = new TestConfigValue {Value = 2},
-    EnhancedCostMultiplier = new TestConfigValue {Value = 3}
+    EnhancedCostMultiplier = new TestConfigValue {Value = 3},
+    EnhancedPopularityBonus = new TestIntConfigValue {Value = 2}
 };
 int evaluations = 0;
 definition.DynamicCostMultiplier = (p, q, g, partial) =>
 {
     evaluations++;
-    return SimpleRecipeRequirementLogic.IsEfficient(p, g) ? definition.EnhancedCostMultiplier.Value : partial;
+    return SimpleRecipeRequirementLogic.GetCostMultiplier(p, q, g, partial);
 };
-definition.DynamicPopularityBonus = (p, q, g, partial) => SimpleRecipeRequirementLogic.IsEfficient(p, g) ? 2 : partial;
+definition.DynamicPopularityBonus = SimpleRecipeRequirementLogic.GetPopularityBonus;
 RequirementCatalog.Definitions[carrier] = definition;
 var currentSimple = new GeneratedQuestRequirement
 {
@@ -228,6 +229,7 @@ Console.WriteLine("Passed current-customer refresh, same-NPC edit/revert, custom
 // Install the production lifecycle patches using the game's real Harmony.
 var harmony = new HarmonyLib.Harmony("pcer.tests.current-customer-budget");
 harmony.PatchAll(typeof(CurrentCustomerBudgetPatches));
+harmony.PatchAll(typeof(SimpleRecipePatches));
 var manager = PotionCraft.ManagersSystem.Managers.Npc;
 manager.OnCurrentNpcChanged = () => Check(CurrentCustomerBudget.RawMaximum == 10,
     "Budget must be refreshed before native customer-change listeners run.");
@@ -236,6 +238,28 @@ manager.OnCurrentNpcChanged = null;
 quest.RawMaximum = 12;
 quest.ApplyPartTo(npc);
 Check(CurrentCustomerBudget.RawMaximum == 12, "Native quest application did not refresh the budget.");
+var queuedSimple = new GeneratedQuestRequirement {Simple = false, requirementInQuest = new QuestRequirementInQuest {requirement = carrier}};
+var queued = new PotionCraft.Npc.MonoBehaviourScripts.NpcMonoBehaviour
+{
+    mandatoryQuestRequirements = new() {queuedSimple},
+    optionalQuestRequirements = new() {new GeneratedQuestRequirement
+    {
+        requirementInQuest = new QuestRequirementInQuest {requirement = new QuestRequirementsAdditionalEffects()}
+    }}
+};
+quest.ApplyPartTo(queued);
+Check(queuedSimple.Limit == 16 && SimpleRecipeReward.TryReadRawMaximum(queuedSimple.stringValue1, out var queuedRaw)
+    && queuedRaw == 16, "Queued customer's complete group was not finalized after quest application.");
+Check(CurrentCustomerBudget.RawMaximum == 12, "Queued finalization overwrote the active customer's budget.");
+Check(SimpleRecipeRequirementLogic.FormatDisplayedText(queuedSimple, "<color=red>{0} / {1}</color>")
+    == "<color=red>16 / 9</color>", "Merged text formatter lost live cap/threshold substitution.");
+Check(queuedSimple.GetLocalizedText() == "16 / 9", "Merged text patch was not installed.");
+int previousAmount = potion.Amount;
+potion.Amount = 10;
+PotionCraft.ManagersSystem.Managers.Dialogue.State = PotionCraft.ObjectBased.UIElements.Dialogue.DialogueState.PotionRequest;
+Check(quest.GetPotionReactionKey(potion, PotionCraft.Npc.Parts.Settings.Gender.GenderSet.Male,
+    new() {queuedSimple}, new() {true}) == "partial feedback", "Merged reaction patch did not replace generic praise.");
+potion.Amount = previousAmount;
 manager.OnBeforeLoad();
 Check(CurrentCustomerBudget.RawMaximum == null, "Load start did not clear the old budget.");
 manager.OnLoad();

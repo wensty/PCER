@@ -71,6 +71,8 @@ namespace PotionCraftExtraRequirements
         public TestConfigValue EnhancedCostMultiplier;
         public float? DefaultEnhancedCostMultiplier;
         public TestIntConfigValue PopularityBonus = new() {Value = 1};
+        public TestIntConfigValue EnhancedPopularityBonus;
+        public int? DefaultEnhancedPopularityBonus;
         public HashSet<string> Tags = new();
         public Func<Potion, Quest, GeneratedQuestRequirement, bool> IsSatisfied = (p, q, g) => g.Completed;
         public Func<Quest, IReadOnlyList<GeneratedQuestRequirement>, bool> CanGenerate = (q, g) => true;

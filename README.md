@@ -180,10 +180,19 @@ the native ×1.75 coefficient. Registered custom metadata takes precedence.
 
 The source files separate these responsibilities:
 
-- `IngredientLimitModifier.cs`: one contribution's allowance/coefficient and aggregation.
-- `IngredientLimitRegistry.cs`: registering and resolving native/custom requirement metadata.
-- `SimpleRecipeReward.cs`: raw-value encoding, full-fulfillment threshold and reward qualification.
-- `CurrentCustomerBudget.cs`: shared current-customer refresh trigger and reward context.
+- `IngredientLimitMetadata.cs`: allowance/coefficient values, aggregation and native/custom registry.
+- `NativeRequirementDefinitions.cs`: native requirement metadata mappings.
+- `SimpleRecipeRequirementLogic.cs`: budget formula, reward thresholds, encoding, text and reaction patches.
+- `CurrentCustomerBudget.cs`: current-customer context and its game lifecycle patches.
+- `DynamicRequirementRewardPatches.cs`: price/popularity fallback for non-current generated groups.
+
+Final budget calculation now runs after `Quest.ApplyPartTo` assigns the complete
+group, including for queued customers. The old Simple Recipe postfix on
+`Quest.GetGeneratedQuestRequirements` was removed to avoid duplicate finalization.
+Initial per-requirement generation still supplies values for planner validation.
+The temporary localization diagnostic file writer and unused integer-budget helper
+were removed. Effect distance is read during budget updates, without retaining a
+separate permanent quest cache. Public metadata types and configuration keys are unchanged.
 
 `RequirementTexts.PartialReactions` supplies optional partial-success lines for
 both mandatory and optional text pools. For the current customer, the native

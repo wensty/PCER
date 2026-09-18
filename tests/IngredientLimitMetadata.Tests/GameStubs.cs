@@ -9,6 +9,7 @@ namespace PotionCraft.ScriptableObjects
     public class PotionBase
     {
         public RecipeMapIndexEnum Index;
+        public Dictionary<PotionEffect, PotionCraft.ManagersSystem.RecipeMap.PositionAndRotation> potionEffectsDictionary = new();
         public RecipeMapIndexEnum GetRecipeMapIndexEnum() => Index;
         public static PotionBase GetByName(string name, bool returnFirst, bool warning)
             => Enum.TryParse(name, out RecipeMapIndexEnum index) ? new PotionBase { Index = index } : null;
@@ -29,7 +30,16 @@ namespace PotionCraft.QuestSystem
     public class QuestRequirementInQuest { public QuestRequirement requirement; public PotionBase potionBase; }
     public class Quest
     {
-        public float RawMaximum = 10;
+        public Quest() { RawMaximum = 10; }
+        public float RawMaximum
+        {
+            set
+            {
+                var effect = new PotionEffect();
+                desiredEffects = new[] {effect};
+                PotionCraft.Settings.Settings<PotionCraft.ManagersSystem.RecipeMap.RecipeMapManagerPotionBasesSettings>.Asset.defaultPotionBase.potionEffectsDictionary[effect] = new PotionCraft.ManagersSystem.RecipeMap.PositionAndRotation { Position = new UnityEngine.Vector2 {magnitude = (value - .2f) * 8f} };
+            }
+        }
         public int NativeGenerationCalls;
         public Action BeforeGeneration;
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -48,17 +58,25 @@ namespace PotionCraft.QuestSystem
             NativeGenerationCalls++;
             return Tuple.Create(npc.mandatoryQuestRequirements, npc.optionalQuestRequirements);
         }
-        public object desiredEffects;
-        public string GetPotionReactionKey() => "native";
+        public PotionEffect[] desiredEffects;
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public string GetPotionReactionKey(PotionCraft.ScriptableObjects.Potion.Potion potion,
+            PotionCraft.Npc.Parts.Settings.Gender.GenderSet gender,
+            List<GeneratedQuestRequirement> requirements, List<bool> requirementsCompleteStatus)
+            => "#potion_reaction_max_tier_3_Male";
     }
     public class GeneratedQuestRequirement
     {
         public QuestRequirementInQuest requirementInQuest;
         public string stringValue1;
         public bool Completed = true;
-        public bool Simple;
-        public int Limit = 10;
+        public bool Simple { set { if (value) requirementInQuest.requirement.name = "PCER_SimpleRecipe"; } }
+        public int intValue1 = 10;
+        public int Limit { get => intValue1; set => intValue1 = value; }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public string GetLocalizedText() => "{0} / {1}";
         public bool IsRequirementCompleted(PotionCraft.ScriptableObjects.Potion.Potion potion, Quest quest) => Completed;
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public string GetLocalizedReaction(PotionCraft.Npc.Parts.Settings.Gender.GenderSet gender, bool isCompletedPartially)
             => isCompletedPartially ? "partial feedback" : "failure feedback";
     }
@@ -83,31 +101,7 @@ namespace PotionCraftExtraRequirements
             => TryGet(generated.requirementInQuest.requirement, out definition);
     }
     public class CustomCarrier : QuestRequirementNoSalts { }
-    // Isolate the patch's routing from game inventory access; the real math is
-    // linked and tested separately via SimpleRecipeReward above.
-    internal static class SimpleRecipeRequirementLogic
-    {
-        public static void UpdateGeneratedRequirement(Quest quest, IReadOnlyList<GeneratedQuestRequirement> all,
-            GeneratedQuestRequirement generated)
-        {
-            float raw = IngredientLimitModifier.Combine(quest.RawMaximum,
-                all.Where(r => !r.Simple).Select(IngredientLimitRegistry.Get));
-            generated.Limit = Math.Max(1, (int)Math.Floor(raw));
-            generated.stringValue1 = SimpleRecipeReward.EncodeRawMaximum(raw);
-        }
-        public static bool IsSimpleRecipeRequirement(GeneratedQuestRequirement generated) => generated.Simple;
-        public static bool IsSatisfied(PotionCraft.ScriptableObjects.Potion.Potion potion, Quest quest, GeneratedQuestRequirement generated)
-            => generated.Completed;
-        public static bool IsEfficient(PotionCraft.ScriptableObjects.Potion.Potion potion, GeneratedQuestRequirement generated)
-            => SimpleRecipeReward.TryReadRawMaximum(generated.stringValue1, out float raw)
-                && SimpleRecipeReward.IsEfficient(potion.Amount, generated.Limit, raw);
-        public static bool TryGetEfficiencyThreshold(GeneratedQuestRequirement generated, out int threshold)
-        {
-            threshold = 0;
-            return SimpleRecipeReward.TryReadRawMaximum(generated.stringValue1, out float raw)
-                && SimpleRecipeReward.TryGetEfficiencyThreshold(generated.Limit, raw, out threshold);
-        }
-    }
+
 }
 namespace PotionCraft.ScriptableObjects.Potion
 {

@@ -1,7 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using HarmonyLib;
+using PotionCraft.ManagersSystem;
 using PotionCraft.ManagersSystem.RecipeMap;
+using PotionCraft.Npc.Parts.Settings;
+using PotionCraft.ObjectBased.UIElements.Dialogue;
 using PotionCraft.QuestSystem;
 using PotionCraft.ScriptableObjects;
 using PotionCraft.ScriptableObjects.Potion;
@@ -16,8 +21,6 @@ internal static class SimpleRecipeRequirementLogic
     private const int MinimumAmount = 1;
     private const float BaseAllowance = 0.2f;
     private const float DistanceStep = 8.0f;
-    private static readonly Dictionary<Quest, float> EffectDistanceAllowanceCache =
-        new Dictionary<Quest, float>();
 
     public static bool IsSatisfied(
         Potion potion,
@@ -53,20 +56,12 @@ internal static class SimpleRecipeRequirementLogic
         // cloning/snapshots preserve the bonus threshold independently of NPC state.
         simpleRecipeRequirement.stringValue1 = SimpleRecipeReward.EncodeRawMaximum(rawMaximum);
         // Text fields remain localization keys; expand live amounts only when displayed.
-        RequirementLocalizationDiagnostics.LogGenerated(quest, generatedRequirements, simpleRecipeRequirement);
-    }
-
-    public static int CalculateMaximumIngredientAmount(
-        Quest quest,
-        IReadOnlyList<GeneratedQuestRequirement> generatedRequirements)
-    {
-        return Math.Max(MinimumAmount, Mathf.FloorToInt(CalculateRawMaximumIngredientAmount(quest, generatedRequirements)));
     }
 
     public static float CalculateRawMaximumIngredientAmount(
         Quest quest, IReadOnlyList<GeneratedQuestRequirement> generatedRequirements)
     {
-        return IngredientLimitModifier.Combine(BaseAllowance + EffectDistanceAllowance(quest),
+        return IngredientLimitModifier.Combine(BaseAllowance + FarthestDesiredEffectDistanceOnDefaultBase(quest) / DistanceStep,
             (generatedRequirements ?? Array.Empty<GeneratedQuestRequirement>())
                 .Where(generated => !IsSimpleRecipeRequirement(generated))
                 .Select(IngredientLimitRegistry.Get));
@@ -128,29 +123,12 @@ internal static class SimpleRecipeRequirementLogic
 
         string thresholdText = TryGetEfficiencyThreshold(generated, out int threshold)
             ? threshold.ToString() : "—";
-        string result = value.Replace("{0}", LimitText(generated)).Replace("{1}", thresholdText);
-        RequirementLocalizationDiagnostics.LogDisplayed(generated, value, result);
-        return result;
+        return value.Replace("{0}", LimitText(generated)).Replace("{1}", thresholdText);
     }
 
     private static string LimitText(GeneratedQuestRequirement generated)
     {
         return Math.Max(MinimumAmount, generated?.intValue1 ?? MinimumAmount).ToString();
-    }
-
-    private static float EffectDistanceAllowance(Quest quest)
-    {
-        if (quest != null && EffectDistanceAllowanceCache.TryGetValue(quest, out float cached))
-            return cached;
-
-        float farthestDistance = FarthestDesiredEffectDistanceOnDefaultBase(quest);
-        float allowance = farthestDistance <= 0f
-            ? 0f
-            : farthestDistance / DistanceStep;
-
-        if (quest != null)
-            EffectDistanceAllowanceCache[quest] = allowance;
-        return allowance;
     }
 
     private static float FarthestDesiredEffectDistanceOnDefaultBase(Quest quest)
@@ -188,4 +166,91 @@ internal static class SimpleRecipeRequirementLogic
             && definition.Tags.Contains(BuiltInRequirementDefinitions.BroadCategoryTag);
     }
 
+}
+
+internal static class SimpleRecipeReward
+{
+    private const string RawMaximumPrefix = "PCER_SimpleRecipeRaw:";
+
+    public static string EncodeRawMaximum(float rawMaximum)
+        => RawMaximumPrefix + rawMaximum.ToString("R", CultureInfo.InvariantCulture);
+
+    public static bool TryReadRawMaximum(string encoded, out float rawMaximum)
+    {
+        rawMaximum = 0;
+        return encoded != null && encoded.StartsWith(RawMaximumPrefix, StringComparison.Ordinal)
+            && float.TryParse(encoded.Substring(RawMaximumPrefix.Length), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out rawMaximum)
+            && !float.IsNaN(rawMaximum) && !float.IsInfinity(rawMaximum);
+    }
+
+    public static bool IsEfficient(int actual, int displayedMaximum, float rawMaximum)
+    {
+        return TryGetEfficiencyThreshold(displayedMaximum, rawMaximum, out int threshold)
+            && actual > 0 && actual <= threshold;
+    }
+
+    public static bool TryGetEfficiencyThreshold(int displayedMaximum, float rawMaximum, out int threshold)
+    {
+        threshold = 0;
+        if (displayedMaximum < 1 || rawMaximum <= 0f
+            || float.IsNaN(rawMaximum) || float.IsInfinity(rawMaximum))
+            return false;
+        threshold = (int)Math.Min(displayedMaximum, Math.Floor(rawMaximum * 0.6f));
+        return threshold >= 1;
+    }
+}
+
+[HarmonyPatch]
+internal static class SimpleRecipePatches
+{
+    [HarmonyPostfix]
+    [HarmonyPatch(
+        typeof(GeneratedQuestRequirement),
+        nameof(GeneratedQuestRequirement.GetLocalizedText))]
+    private static void GetLocalizedTextPostfix(
+        GeneratedQuestRequirement __instance,
+        ref string __result)
+    {
+        __result = SimpleRecipeRequirementLogic.FormatDisplayedText(__instance, __result);
+    }
+
+    [HarmonyPostfix]
+    [HarmonyPatch(
+        typeof(GeneratedQuestRequirement),
+        nameof(GeneratedQuestRequirement.GetLocalizedReaction))]
+    private static void GetLocalizedReactionPostfix(
+        GeneratedQuestRequirement __instance,
+        ref string __result)
+    {
+        __result = SimpleRecipeRequirementLogic.FormatDisplayedText(__instance, __result);
+    }
+
+    [HarmonyPostfix]
+    [HarmonyPatch(typeof(Quest), nameof(Quest.GetPotionReactionKey))]
+    internal static void ReactionPostfix(Quest __instance, Potion potion, Gender.GenderSet gender,
+        List<GeneratedQuestRequirement> requirements, List<bool> requirementsCompleteStatus,
+        ref string __result)
+    {
+        if (potion == null || requirements == null || requirementsCompleteStatus == null
+            || requirements.Count != requirementsCompleteStatus.Count
+            || requirementsCompleteStatus.Any(completed => !completed)
+            || Managers.Dialogue?.State == DialogueState.ClosenessPotionRequest
+            || Potion.GetPotionReview(potion.Effects, __instance.desiredEffects).maxTier == 0)
+            return;
+        var simple = requirements.FirstOrDefault(SimpleRecipeRequirementLogic.IsSimpleRecipeRequirement);
+        if (simple == null || !SimpleRecipeRequirementLogic.IsSatisfied(potion, __instance, simple)
+            || !SimpleRecipeRequirementLogic.TryGetEfficiencyThreshold(simple, out _)
+            || SimpleRecipeRequirementLogic.IsEfficient(potion, simple))
+            return;
+
+        // Like native additional effects, partial fulfillment replaces the generic
+        // tier reaction. Preserve an existing requirement-specific partial response.
+        string partial = simple.GetLocalizedReaction(gender, isCompletedPartially: true);
+        if (string.IsNullOrEmpty(__result)
+            || __result.StartsWith("#potion_reaction_max_tier_", System.StringComparison.Ordinal))
+            __result = partial;
+        else
+            __result += "\n" + partial;
+    }
 }

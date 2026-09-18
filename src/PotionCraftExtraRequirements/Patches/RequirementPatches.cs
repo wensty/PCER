@@ -2,10 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using HarmonyLib;
 using PotionCraft.LocalizationSystem;
-using PotionCraft.Npc.MonoBehaviourScripts;
 using PotionCraft.QuestSystem;
 using PotionCraft.ScriptableObjects.Ingredient;
-using PotionCraft.ScriptableObjects.Potion;
 
 namespace PotionCraftExtraRequirements;
 
@@ -36,30 +34,6 @@ internal static class RequirementUnlockChapterPatch
 [HarmonyPatch]
 internal static class NativeRequirementCompatibilityPatches
 {
-    [HarmonyPostfix]
-    [HarmonyPatch(typeof(Quest), "GetGeneratedQuestRequirements")]
-    private static void GetGeneratedQuestRequirementsPostfix(
-        Quest __instance,
-        NpcMonoBehaviour npc,
-        ref System.Tuple<List<GeneratedQuestRequirement>, List<GeneratedQuestRequirement>> __result)
-    {
-        if (__result == null)
-            return;
-
-        List<GeneratedQuestRequirement> mandatory = __result.Item1 ?? new List<GeneratedQuestRequirement>();
-        List<GeneratedQuestRequirement> optional = __result.Item2 ?? new List<GeneratedQuestRequirement>();
-        if (!mandatory.Any(SimpleRecipeRequirementLogic.IsSimpleRecipeRequirement)
-            && !optional.Any(SimpleRecipeRequirementLogic.IsSimpleRecipeRequirement))
-            return;
-
-        List<GeneratedQuestRequirement> all = mandatory.Concat(optional).ToList();
-        foreach (GeneratedQuestRequirement generated in all)
-        {
-            if (SimpleRecipeRequirementLogic.IsSimpleRecipeRequirement(generated))
-                SimpleRecipeRequirementLogic.UpdateGeneratedRequirement(__instance, all, generated);
-        }
-    }
-
     [HarmonyPostfix]
     [HarmonyPatch(typeof(QuestRequirementNoSalts), nameof(QuestRequirementNoSalts.UpdateGeneratedRequirement))]
     private static void NoSaltsPostfix(
@@ -132,32 +106,6 @@ internal static class NativeRequirementCompatibilityPatches
             && definition.Tags.Contains(BuiltInRequirementDefinitions.HighlanderTag);
     }
 
-}
-
-[HarmonyPatch]
-internal static class GeneratedRequirementTextPatches
-{
-    [HarmonyPostfix]
-    [HarmonyPatch(
-        typeof(GeneratedQuestRequirement),
-        nameof(GeneratedQuestRequirement.GetLocalizedText))]
-    private static void GetLocalizedTextPostfix(
-        GeneratedQuestRequirement __instance,
-        ref string __result)
-    {
-        __result = SimpleRecipeRequirementLogic.FormatDisplayedText(__instance, __result);
-    }
-
-    [HarmonyPostfix]
-    [HarmonyPatch(
-        typeof(GeneratedQuestRequirement),
-        nameof(GeneratedQuestRequirement.GetLocalizedReaction))]
-    private static void GetLocalizedReactionPostfix(
-        GeneratedQuestRequirement __instance,
-        ref string __result)
-    {
-        __result = SimpleRecipeRequirementLogic.FormatDisplayedText(__instance, __result);
-    }
 }
 
 [HarmonyPatch]
