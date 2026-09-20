@@ -37,6 +37,7 @@ public static class BuiltInRequirementDefinitions
             isSatisfied: (potion, _, __) =>
                 PotionIngredientFacts.UsesNone(potion, itemType),
             unlockChapter: unlockChapter,
+            spawnWeight: 0.33f,
             costMultiplier: 2f,
             tags: new[] { BroadCategoryTag },
             conflictingTags: new[] { BroadCategoryTag, HighlanderTag, SimpleRecipeTag },
@@ -49,6 +50,7 @@ public static class BuiltInRequirementDefinitions
             isSatisfied: (potion, _, __) =>
                 PotionIngredientFacts.UsesOnly(potion, itemType),
             unlockChapter: unlockChapter,
+            spawnWeight: 0.33f,
             costMultiplier: 3f,
             tags: new[] { BroadCategoryTag },
             conflictingTags: new[] { BroadCategoryTag, HighlanderTag, SimpleRecipeTag },

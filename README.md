@@ -73,6 +73,12 @@ BepInEx/config/cn.potioncraft.extra-requirements.cfg
 
 ### Simple Recipe: ingredient allowance and fulfillment tiers
 
+All six broad ingredient-category restrictions (`NoHerbs`, `OnlyHerbs`,
+`NoMushrooms`, `OnlyMushrooms`, `NoCrystals`, `OnlyCrystals`) default to
+`SpawnWeight = 0.33`. This is a relative generation weight, not a 33% probability.
+Existing configuration values are preserved; set these six entries to `0.33`
+to apply the new weights to an existing installation.
+
 The total-ingredient requirement preserves the updated distance formula:
 
 ```text
@@ -92,7 +98,7 @@ requirements contribute equally. The Simple Recipe requirement excludes itself.
 | Main Ingredient                |         +0.5 |               ×1.4 |
 | Need One Particular Ingredient |           +1 |                 ×1 |
 | No Particular Ingredient       |           +0 |                 ×1 |
-| No Salts (native)              |           +0 |              ×1.75 |
+| No Salts (native)              |           +0 |              ×1.35 |
 | Highlander-1 / 2 / 3           | +3 / +2 / +1 |                 ×1 |
 | Lowlander-1 / 2 / 3            |           +0 | ×1.6 / ×1.3 / ×1.1 |
 | Only Water / No Oil / No Wine  |           +0 |         ×1.25 each |
@@ -176,7 +182,7 @@ allowance +1 → +2 → +3 and default price multiplier ×1.5 → ×2 → ×3.
 Native definitions are attached in `NativeRequirementDefinitions` using
 `IngredientLimitRegistry.RegisterNative<T>(...)`. Matching uses the exact
 native type, so a custom requirement using the No Salts carrier does not inherit
-the native ×1.75 coefficient. Registered custom metadata takes precedence.
+the native ×1.35 coefficient. Registered custom metadata takes precedence.
 
 The source files separate these responsibilities:
 
@@ -353,6 +359,12 @@ dotnet run --project tests/NativeIngredientTripleConflict.Tests -c Release
 ```
 
 ### Requirement planning
+
+Planner's random-rule weight inputs edit actual generation weights. Unedited
+entries and Reset use each requirement's current `spawnChance`, including mod
+configuration (for example, `0.33` for ingredient-category restrictions). Opening
+the window does not create overrides. An edited value replaces the base weight;
+`0` excludes the requirement from random selection. These inputs are not multipliers.
 
 The planner can assign mandatory (`Must`) and optional (`Can`) extra
 requirements to the planned customer.

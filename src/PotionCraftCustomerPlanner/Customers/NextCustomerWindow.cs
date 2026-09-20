@@ -939,7 +939,7 @@ internal static class NextCustomerWindow
         DrawRandomChanceSection(T("randomRule.optionalChances"), false);
 
         GUILayout.Space(U(8f));
-        DrawRequirementCategoryHeader(T("randomRule.weightMultipliers"));
+        DrawRequirementCategoryHeader(T("randomRule.weights"));
         if (cachedRequirements.Count == 0)
             GUILayout.Label(T("randomRule.noCache"));
         foreach (QuestRequirementInQuest requirement in cachedRequirements
@@ -1024,25 +1024,29 @@ internal static class NextCustomerWindow
         GUILayout.BeginHorizontal();
         GUILayout.Label(name, Width(360f));
         GUILayout.Label(T("randomRule.nativeWeight", requirement.requirement.spawnChance.ToString("0.###")), Width(180f));
-        GUILayout.Label("x", Width(18f));
-        RandomRequirementWeightTexts.TryGetValue(name, out string text);
-        if (string.IsNullOrWhiteSpace(text))
-            text = RandomRequirementRule.RequirementWeightMultipliers.TryGetValue(name, out float multiplier)
-                ? multiplier.ToString("0.###")
-                : "1";
+        if (!RandomRequirementWeightTexts.TryGetValue(name, out string text))
+            text = RandomRequirementRule.GetWeight(requirement).ToString("G");
         string edited = GUILayout.TextField(text, Width(110f));
-        RandomRequirementWeightTexts[name] = edited;
-        if (float.TryParse(edited, out float parsed) && !float.IsNaN(parsed) && !float.IsInfinity(parsed))
+        // Do not cache or parse an untouched default: opening this UI must not
+        // create overrides or hide subsequent changes to the source weight.
+        if (edited != text)
         {
-            if (Mathf.Approximately(parsed, 1f))
-                RandomRequirementRule.RequirementWeightMultipliers.Remove(name);
-            else
-                RandomRequirementRule.RequirementWeightMultipliers[name] = Mathf.Max(0f, parsed);
+            RandomRequirementWeightTexts[name] = edited;
+            if (float.TryParse(edited, out float parsed) && !float.IsNaN(parsed) && !float.IsInfinity(parsed))
+            {
+                if (Mathf.Approximately(Mathf.Max(0f, parsed), Mathf.Max(0f, requirement.requirement.spawnChance)))
+                {
+                    RandomRequirementRule.RequirementWeightOverrides.Remove(name);
+                    RandomRequirementWeightTexts.Remove(name);
+                }
+                else
+                    RandomRequirementRule.RequirementWeightOverrides[name] = Mathf.Max(0f, parsed);
+            }
         }
         if (GUILayout.Button(T("randomRule.resetOne"), Width(90f)))
         {
-            RandomRequirementRule.RequirementWeightMultipliers.Remove(name);
-            RandomRequirementWeightTexts[name] = "1";
+            RandomRequirementRule.RequirementWeightOverrides.Remove(name);
+            RandomRequirementWeightTexts.Remove(name);
         }
         GUILayout.EndHorizontal();
     }
@@ -1052,7 +1056,7 @@ internal static class NextCustomerWindow
         ApplyRandomRuleGlobally = false;
         RandomRequirementRule.OverrideMandatorySpawnChances = false;
         RandomRequirementRule.OverrideOptionalSpawnChances = false;
-        RandomRequirementRule.RequirementWeightMultipliers.Clear();
+        RandomRequirementRule.RequirementWeightOverrides.Clear();
         RandomRequirementWeightTexts.Clear();
         SyncRandomRuleChanceDefaults();
     }

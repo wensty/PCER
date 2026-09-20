@@ -2019,13 +2019,13 @@ internal static class NextCustomerDirector
         public List<int> MandatorySlotChances { get; } = new List<int>();
         public bool OverrideOptionalSpawnChances { get; set; }
         public List<int> OptionalSlotChances { get; } = new List<int>();
-        public Dictionary<string, float> RequirementWeightMultipliers { get; } =
+        public Dictionary<string, float> RequirementWeightOverrides { get; } =
             new Dictionary<string, float>(System.StringComparer.OrdinalIgnoreCase);
 
         public static RandomRequirementRule Default => new RandomRequirementRule();
 
         public bool HasOverrides => OverrideMandatorySpawnChances
-            || OverrideOptionalSpawnChances || RequirementWeightMultipliers.Count > 0;
+            || OverrideOptionalSpawnChances || RequirementWeightOverrides.Count > 0;
 
         public IReadOnlyList<int> GetSpawnChances(
             QuestRequirementDifficultySettings settings,
@@ -2045,10 +2045,8 @@ internal static class NextCustomerDirector
             if (source == null)
                 return 0f;
 
-            float weight = Mathf.Max(0f, source.spawnChance);
-            if (RequirementWeightMultipliers.TryGetValue(source.name, out float multiplier))
-                weight *= Mathf.Max(0f, multiplier);
-            return weight;
+            return Mathf.Max(0f, RequirementWeightOverrides.TryGetValue(source.name, out float weight)
+                ? weight : source.spawnChance);
         }
 
     }

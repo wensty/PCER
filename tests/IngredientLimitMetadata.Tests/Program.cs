@@ -19,7 +19,7 @@ Expect(Read(new QuestRequirementsAdditionalEffects()), 4, 1);
 Expect(Read(new QuestRequirementMainIngredient()), .5f, 1.4f);
 Expect(Read(new QuestRequirementNeedOneParticularIngredient()), 1, 1);
 Expect(Read(new QuestRequirementNoParticularIngredient()), 0, 1);
-Expect(Read(new QuestRequirementNoSalts()), 0, 1.75f);
+Expect(Read(new QuestRequirementNoSalts()), 0, 1.35f);
 Expect(Read(new QuestRequirement()), 0, 1);
 float[] multipliers = {1.6f, 1.3f, 1.1f, 1f};
 for (int cap = 1; cap <= 4; cap++)

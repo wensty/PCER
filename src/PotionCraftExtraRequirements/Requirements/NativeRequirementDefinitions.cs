@@ -11,7 +11,7 @@ internal static class NativeRequirementDefinitions
         IngredientLimitRegistry.RegisterNative<QuestRequirementsAdditionalEffects>(_ => new IngredientLimitModifier(4f));
         IngredientLimitRegistry.RegisterNative<QuestRequirementMainIngredient>(_ => new IngredientLimitModifier(0.5f, 1.4f));
         IngredientLimitRegistry.RegisterNative<QuestRequirementNeedOneParticularIngredient>(_ => new IngredientLimitModifier(1f));
-        IngredientLimitRegistry.RegisterNative<QuestRequirementNoSalts>(_ => new IngredientLimitModifier(multiplier: 1.75f));
+        IngredientLimitRegistry.RegisterNative<QuestRequirementNoSalts>(_ => new IngredientLimitModifier(multiplier: 1.35f));
         IngredientLimitRegistry.RegisterNative<QuestRequirementMaxIngredients>(generated =>
         {
             int limit = ((QuestRequirementMaxIngredients)generated.requirementInQuest.requirement).maxIngredientsAmount;
