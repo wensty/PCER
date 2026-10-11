@@ -1763,16 +1763,14 @@ internal static class NextCustomerWindow
                 .Where(ingredient => ingredient != null)
                 .OrderBy(ingredient => ingredient.name, StringComparer.OrdinalIgnoreCase))
             {
-                ElementalPotential normalPotential = ingredient.GetElementalPotential(false);
-                ElementalPotential shortDistancePotential = ingredient.GetElementalPotential(true);
                 List<string> row = new List<string>
                 {
                     ingredient.name,
                     ingredient.GetItemType().ToString(),
                     ingredient.chapter.ToString(CultureInfo.InvariantCulture)
                 };
-                row.AddRange(elements.Select(element => SafeIngredientPotential(normalPotential, element)));
-                row.AddRange(elements.Select(element => SafeIngredientPotential(shortDistancePotential, element)));
+                row.AddRange(elements.Select(element => SafeIngredientPotential(ingredient, false, element)));
+                row.AddRange(elements.Select(element => SafeIngredientPotential(ingredient, true, element)));
                 lines.Add(CsvRow(row.ToArray()));
             }
 
@@ -1910,11 +1908,11 @@ internal static class NextCustomerWindow
         }
     }
 
-    private static string SafeIngredientPotential(ElementalPotential potential, ElementType element)
+    private static string SafeIngredientPotential(Ingredient ingredient, bool shortDistance, ElementType element)
     {
         try
         {
-            return FormatCsvFloat(potential?.GetPotential(element, 0, false) ?? 0f);
+            return FormatCsvFloat(IngredientElementAffinityCache.GetPotential(ingredient, shortDistance, element));
         }
         catch (Exception ex)
         {
@@ -2137,10 +2135,9 @@ internal static class NextCustomerWindow
             return "(no enabled quest dominant elements)";
 
         bool shortDistancePotential = GetPrivateBool(certainIngredient, IngredientShortDistancePotentialField, fallback: false);
-        ElementalPotential elementalPotential = ingredient.GetElementalPotential(shortDistancePotential);
         return string.Join(
             ", ",
-            dominantElements.Select(element => $"{element}={elementalPotential.GetPotential(element):0.#########}").ToArray());
+            dominantElements.Select(element => $"{element}={IngredientElementAffinityCache.GetPotential(ingredient, shortDistancePotential, element):0.#########}").ToArray());
     }
 
     private static void WriteSpawnDiagnostics(IReadOnlyList<string> lines)
@@ -3086,8 +3083,8 @@ internal static class NextCustomerWindow
             certainIngredient,
             IngredientPotentialThresholdField,
             fallback: 0.2f);
-        ElementalPotential elementalPotential = ingredient.GetElementalPotential(shortDistancePotential);
-        if (dominantElements.Any(element => elementalPotential.GetPotential(element, 0, false) >= potentialThreshold))
+        if (dominantElements.Any(element =>
+            IngredientElementAffinityCache.GetPotential(ingredient, shortDistancePotential, element) >= potentialThreshold))
             return true;
 
         reason = $"Target ingredient {ingredient.name} does not match the elemental potential required by {certainIngredient.name} for quest {targetQuest.name}: shortDistance={shortDistancePotential}, threshold={potentialThreshold:0.#########}.";
