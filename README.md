@@ -17,6 +17,11 @@ semantic targets correctly.
 
 ## Build
 
+A standalone Windows BepInEx mod launcher demo is available in
+[`src/BepInExModLauncher`](src/BepInExModLauncher/README.md). It discovers installed
+plugins and their configurations, applies a startup selection, and launches the
+game. Build this project separately; it does not deploy into the game's plugin folders.
+
 The projects expect the game install path to be provided by the `PotionCraftPath`
 MSBuild property. The intended setup is to define it as an environment variable:
 

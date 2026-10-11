@@ -25,3 +25,13 @@ TestResults/
 # Generated symbols and logs
 *.pdb
 *.log
+
+# Launcher machine-local output and settings
+/launcher-error.txt
+/scan-report.tsv
+/profile.json
+/ui-profile.json
+*.dll.disabled
+*.modlauncher.*.bak
+*.modlauncher.tmp
+mod-launcher-transaction.json

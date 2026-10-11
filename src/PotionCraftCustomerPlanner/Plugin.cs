@@ -20,6 +20,7 @@ public sealed class Plugin : BaseUnityPlugin
         harmony = new Harmony(PluginGuid);
         Logger.LogInfo("Patching planner input blocking.");
         harmony.PatchAll(typeof(PlannerInputBlockPatch));
+        harmony.PatchAll(typeof(PlannerScrollBlockPatch));
         GlobalRequirementGenerationPatch.Install(harmony, Logger);
         harmony.PatchAll(typeof(ExtendedRequirementTextPatch));
         Logger.LogInfo($"{PluginName} {PluginVersion} loaded.");

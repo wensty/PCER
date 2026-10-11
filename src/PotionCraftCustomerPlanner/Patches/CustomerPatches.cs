@@ -169,3 +169,11 @@ internal static class PlannerInputBlockPatch
             __result = true;
     }
 }
+
+// Scroll commands bypass InputManager.HasInputGotToBeDisabled. Block only the
+// game's consumer, leaving IMGUI scroll views and pickers free to use the wheel.
+[HarmonyPatch(typeof(PotionCraft.ManagersSystem.Cursor.CursorManager), "ScrollByMouse")]
+internal static class PlannerScrollBlockPatch
+{
+    private static bool Prefix() => !NextCustomerWindow.ShouldBlockGameInput;
+}
