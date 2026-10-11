@@ -15,12 +15,22 @@ discovers metadata exposed by Extra Requirements at runtime, so custom
 requirements such as ingredient-category restrictions can display their fixed
 semantic targets correctly.
 
-## Build
+## Mod launcher demo
 
 A standalone Windows BepInEx mod launcher demo is available in
-[`src/BepInExModLauncher`](src/BepInExModLauncher/README.md). It discovers installed
-plugins and their configurations, applies a startup selection, and launches the
-game. Build this project separately; it does not deploy into the game's plugin folders.
+[`src/BepInExModLauncher`](src/BepInExModLauncher/README.md). It reads plugin and
+assembly metadata directly from installed DLLs, resolves declared dependencies,
+associates existing configurations by plugin GUID, and applies a startup selection
+before launching the game. All mods use the same discovery logic.
+
+The interface defaults to English. The Settings tab offers English, Simplified
+Chinese, and an explicit option to follow the system language. Translated controls
+resize or wrap to accommodate longer text.
+
+Build the launcher project separately; it does not deploy into the game's plugin
+folders. See its README for usage, limitations, and build instructions.
+
+## Build
 
 The projects expect the game install path to be provided by the `PotionCraftPath`
 MSBuild property. The intended setup is to define it as an environment variable:
@@ -124,7 +134,7 @@ for partial fulfillment and +2 for the full-fulfillment tier by default; +2 repl
 rather than adding to it. An unmet requirement awards no popularity.
 Highlander-1 / 2 / 3 already award +2 / +1 / +1 popularity by default.
 
-The two tiers are called **partial fulfillment (部分满足)** and **full fulfillment (完全满足)**. For compatibility, the existing config keys retain their names: `CostMultiplier` / `PopularityBonus` configure partial fulfillment, and `EnhancedCostMultiplier` / `EnhancedPopularityBonus` configure full fulfillment.
+The two tiers are called **partial fulfillment** and **full fulfillment**. For compatibility, the existing config keys retain their names: `CostMultiplier` / `PopularityBonus` configure partial fulfillment, and `EnhancedCostMultiplier` / `EnhancedPopularityBonus` configure full fulfillment.
 
 Both reward tiers are configurable in `BepInEx/config/cn.potioncraft.extra-requirements.cfg`:
 

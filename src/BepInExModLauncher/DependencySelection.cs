@@ -12,7 +12,7 @@ public static class DependencySelection
     {
         var before = installation.Files.ToDictionary(f => f, f => f.Selected);
         var planned = new Dictionary<ModFile, bool>(before);
-        if (!planned.ContainsKey(requested)) throw new IOException("模组不属于当前扫描结果。");
+        if (!planned.ContainsKey(requested)) throw new IOException(L.T("This plugin is not part of the current scan."));
         planned[requested] = enabled;
         if (enabled)
         {
@@ -25,12 +25,12 @@ public static class DependencySelection
                     foreach (var dependency in mod.Dependencies.Where(d => d.Required))
                     {
                         var candidates = installation.Files.SelectMany(f => f.Plugins.Where(p => p.Guid == dependency.Guid).Select(p => new { File = f, Plugin = p })).ToList();
-                        if (candidates.Count == 0) throw new IOException(mod.Name + " 缺少必需依赖：" + dependency.Guid + "，请先安装。");
-                        if (candidates.Count != 1) throw new IOException("依赖 GUID 有多个候选，请先处理重复插件：" + dependency.Guid);
+                        if (candidates.Count == 0) throw new IOException(mod.Name + L.T(" is missing a required dependency: ") + dependency.Guid + L.T(". Install it first."));
+                        if (candidates.Count != 1) throw new IOException(L.T("Multiple candidates exist for this dependency GUID. Resolve duplicate plugins first: ") + dependency.Guid);
                         var candidate = candidates[0];
                         if (dependency.Minimum != null && (!Version.TryParse(candidate.Plugin.Version, out var actual) ||
                             !Version.TryParse(dependency.Minimum, out var minimum) || actual < minimum))
-                            throw new IOException(mod.Name + " 需要 " + candidate.Plugin.Name + " >= " + dependency.Minimum + "，当前版本 " + candidate.Plugin.Version);
+                            throw new IOException(mod.Name + L.T(" requires ") + candidate.Plugin.Name + " >= " + dependency.Minimum + L.T("; installed version: ") + candidate.Plugin.Version);
                         include(candidate.File);
                     }
             };
@@ -69,11 +69,11 @@ public static class DependencySelection
     public static string Describe(Installation installation, Dependency dependency)
     {
         var matches = installation.Files.SelectMany(f => f.Plugins.Where(p => p.Guid == dependency.Guid).Select(p => new { File = f, Plugin = p })).ToList();
-        var kind = dependency.Required ? "必需" : "可选";
+        var kind = dependency.Required ? L.T("Required") : L.T("Optional");
         var minimum = dependency.Minimum == null ? "" : " >= " + dependency.Minimum;
-        if (matches.Count == 0) return kind + "：" + dependency.Guid + minimum + "（未安装）";
-        if (matches.Count > 1) return kind + "：" + dependency.Guid + minimum + "（重复 GUID）";
+        if (matches.Count == 0) return kind + ": " + dependency.Guid + minimum + L.T(" (not installed)");
+        if (matches.Count > 1) return kind + ": " + dependency.Guid + minimum + L.T(" (duplicate GUID)");
         var match = matches[0];
-        return kind + "：" + match.Plugin.Name + minimum + "（" + match.Plugin.Version + "，" + (match.File.Selected ? "已选择" : "未选择") + "）";
+        return kind + ": " + match.Plugin.Name + minimum + " (" + match.Plugin.Version + ", " + (match.File.Selected ? L.T("Selected") : L.T("Not selected")) + ")";
     }
 }

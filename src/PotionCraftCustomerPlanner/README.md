@@ -18,6 +18,27 @@ mostly implementation and compatibility notes for mod authors.
 - The toggle key can be changed in the BepInEx config file.
 - While the planner window is open, the mod tries to keep the system cursor
   visible and block most native game input.
+- `Esc` closes the most recently opened child window (random rules or a
+  target/effect picker), then the main planner when no children remain. The main
+  planner is the first window in this order. Each press closes one window and
+  does not open the game pause menu, even with `BlockGameInputWhenOpen` disabled.
+  Once the planner is closed, subsequent presses use normal game Escape handling.
+  Escape detection uses the new Input System's `Keyboard.current`, because the
+  game disables legacy `UnityEngine.Input` reads. A missing keyboard is safe.
+
+Mouse-wheel blocking is installed only after a player input object and its
+actions exist. Installing that Harmony patch during BepInEx `Awake` can trigger
+the game's input static initializer before `PlayerInput.all[0]` exists, causing
+an `ArgumentOutOfRangeException` followed by input `TypeInitializationException`s.
+After replacing an affected DLL, restart the game to clear the failed static
+initialization. Planner scroll views continue to receive mouse-wheel input.
+
+The startup lifecycle regression checks use doubles for Unity and Harmony:
+
+```powershell
+dotnet run --project tests/PlannerStartup.Tests
+dotnet run --project tests/PlannerChildWindows.Tests
+```
 
 ### Search, browse, and lock a target
 

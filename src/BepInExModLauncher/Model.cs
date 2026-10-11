@@ -30,6 +30,7 @@ public sealed class Mod
 public sealed class ModFile
 {
     public string Path, Hash;
+    public string AssemblyName, AssemblyVersion, Company, Description;
     public bool Enabled, Selected;
     public readonly List<Mod> Plugins = new List<Mod>();
     public string Name => string.Join(" / ", Plugins.Select(p => p.Name));
@@ -37,20 +38,16 @@ public sealed class ModFile
 }
 
 [DataContract]
-public sealed class Annotation
-{
-    // Keep the serialized member name for compatibility with existing local profiles.
-    [DataMember] public string Category = "";
-    [DataMember] public string Notes = "";
-    [DataMember] public string Hash = "";
-}
-
-[DataContract]
 public sealed class Profile
 {
     [DataMember] public string GameExe = "";
-    [DataMember] public Dictionary<string, Annotation> Annotations = new Dictionary<string, Annotation>();
-    public static Profile Read(string path) => File.Exists(path) ? Json.Read<Profile>(path) : new Profile();
+    [DataMember] public string Language = "en";
+    public static Profile Read(string path)
+    {
+        var profile = File.Exists(path) ? Json.Read<Profile>(path) : new Profile();
+        if (profile.Language != "en" && profile.Language != "zh-CN" && profile.Language != "auto") profile.Language = "en";
+        return profile;
+    }
 }
 
 public static class Json
@@ -87,7 +84,7 @@ public sealed class Installation
     public void Scan()
     {
         Files.Clear(); Warnings.Clear(); LibraryCount = 0;
-        if (!Directory.Exists(PluginRoot)) throw new IOException("找不到 BepInEx/plugins：" + PluginRoot);
+        if (!Directory.Exists(PluginRoot)) throw new IOException(L.T("BepInEx/plugins was not found: ") + PluginRoot);
         using (var resolver = new DefaultAssemblyResolver())
         {
             resolver.AddSearchDirectory(System.IO.Path.Combine(Root, "BepInEx", "core"));
@@ -103,6 +100,10 @@ public sealed class Installation
                     using (var assembly = AssemblyDefinition.ReadAssembly(physical, new ReaderParameters { AssemblyResolver = resolver }))
                     {
                         var file = new ModFile { Path = logical, Hash = Fingerprint(physical), Enabled = enabled, Selected = enabled };
+                        file.AssemblyName = assembly.Name.Name;
+                        file.AssemblyVersion = assembly.Name.Version.ToString();
+                        file.Company = AssemblyText(assembly, "System.Reflection.AssemblyCompanyAttribute");
+                        file.Description = AssemblyText(assembly, "System.Reflection.AssemblyDescriptionAttribute");
                         foreach (var type in AllTypes(assembly.MainModule.Types))
                         {
                             var metadata = type.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "BepInEx.BepInPlugin");
@@ -128,7 +129,7 @@ public sealed class Installation
                                 }
                                 if (current.BaseType == null || current.BaseType.FullName == "BepInEx.BaseUnityPlugin" || current.BaseType.FullName == "System.Object") break;
                                 try { current = current.BaseType.Resolve(); }
-                                catch (Exception e) { Warnings.Add(mod.Name + "：无法读取继承元数据：" + e.Message); break; }
+                                catch (Exception e) { Warnings.Add(mod.Name + L.T(": Could not read inherited metadata: ") + e.Message); break; }
                             }
                             file.Plugins.Add(mod);
                         }
@@ -149,11 +150,16 @@ public sealed class Installation
                     var guid = header == null ? System.IO.Path.GetFileNameWithoutExtension(config) : header.Substring("## Plugin GUID:".Length).Trim();
                     foreach (var mod in Files.SelectMany(f => f.Plugins).Where(m => m.Guid == guid)) mod.Configs.Add(config);
                 }
-                catch (Exception e) { Warnings.Add("配置读取失败：" + config + "：" + e.Message); }
+                catch (Exception e) { Warnings.Add(L.T("Could not read configuration: ") + config + "：" + e.Message); }
             }
         Files.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.CurrentCulture));
     }
     private static string Arg(CustomAttribute attr, int index) => Convert.ToString(attr.ConstructorArguments[index].Value);
+    private static string AssemblyText(AssemblyDefinition assembly, string attributeName)
+    {
+        var attribute = assembly.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == attributeName);
+        return attribute != null && attribute.ConstructorArguments.Count > 0 ? Arg(attribute, 0) : "";
+    }
     private static IEnumerable<TypeDefinition> AllTypes(IEnumerable<TypeDefinition> types)
     {
         foreach (var type in types) { yield return type; foreach (var nested in AllTypes(type.NestedTypes)) yield return nested; }
@@ -162,28 +168,28 @@ public sealed class Installation
     {
         var errors = new List<string>();
         var selected = Files.Where(f => f.Selected).SelectMany(f => f.Plugins).ToList();
-        foreach (var duplicate in selected.GroupBy(m => m.Guid).Where(g => g.Count() > 1)) errors.Add("重复插件 GUID：" + duplicate.Key);
+        foreach (var duplicate in selected.GroupBy(m => m.Guid).Where(g => g.Count() > 1)) errors.Add(L.T("Duplicate plugin GUID: ") + duplicate.Key);
         var process = System.IO.Path.GetFileNameWithoutExtension(gameExe);
         foreach (var mod in selected)
         {
             if (mod.Processes.Count > 0 && !mod.Processes.Any(p => string.Equals(System.IO.Path.GetFileNameWithoutExtension(p), process, StringComparison.OrdinalIgnoreCase)))
-                errors.Add(mod.Name + " 不适用于当前游戏进程");
+                errors.Add(mod.Name + L.T(" does not target this game process"));
             foreach (var dependency in mod.Dependencies.Where(d => d.Required))
             {
                 var target = selected.FirstOrDefault(m => m.Guid == dependency.Guid);
-                if (target == null) errors.Add(mod.Name + " 缺少必需依赖：" + dependency.Guid);
+                if (target == null) errors.Add(mod.Name + L.T(" is missing a required dependency: ") + dependency.Guid);
                 else if (dependency.Minimum != null && (!System.Version.TryParse(target.Version, out var actual) ||
                     !System.Version.TryParse(dependency.Minimum, out var minimum) || actual < minimum))
-                    errors.Add(mod.Name + " 需要 " + dependency.Guid + " >= " + dependency.Minimum);
+                    errors.Add(mod.Name + L.T(" requires ") + dependency.Guid + " >= " + dependency.Minimum);
             }
-            foreach (var conflict in mod.Conflicts.Where(c => selected.Any(m => m.Guid == c))) errors.Add(mod.Name + " 与 " + conflict + " 不兼容");
+            foreach (var conflict in mod.Conflicts.Where(c => selected.Any(m => m.Guid == c))) errors.Add(mod.Name + L.T(" conflicts with ") + conflict + L.T(" (incompatible)"));
         }
         // Reject hard-dependency cycles before mutating files.
         var visiting = new HashSet<string>(); var done = new HashSet<string>();
         Action<Mod> visit = null;
         visit = mod => {
             if (done.Contains(mod.Guid)) return;
-            if (!visiting.Add(mod.Guid)) { errors.Add("必需依赖形成循环：" + mod.Guid); return; }
+            if (!visiting.Add(mod.Guid)) { errors.Add(L.T("Required dependency cycle: ") + mod.Guid); return; }
             foreach (var dep in mod.Dependencies.Where(d => d.Required))
             { var target = selected.FirstOrDefault(m => m.Guid == dep.Guid); if (target != null) visit(target); }
             visiting.Remove(mod.Guid); done.Add(mod.Guid);
@@ -194,23 +200,23 @@ public sealed class Installation
     public static void EnsureStopped(string gameExe)
     {
         if (Process.GetProcessesByName(System.IO.Path.GetFileNameWithoutExtension(gameExe)).Length > 0)
-            throw new IOException("游戏正在运行，请先关闭游戏。");
+            throw new IOException(L.T("The game is running. Close it first."));
     }
     public void Apply(string gameExe)
     {
-        if (!File.Exists(gameExe)) throw new IOException("请选择有效的游戏 EXE。");
+        if (!File.Exists(gameExe)) throw new IOException(L.T("Please select a valid game executable."));
         EnsureStopped(gameExe);
-        if (File.Exists(Journal)) throw new IOException("存在未完成操作，请先恢复。");
+        if (File.Exists(Journal)) throw new IOException(L.T("An interrupted operation exists. Recover it first."));
         var errors = Validate(gameExe);
         if (errors.Count > 0) throw new IOException(string.Join(Environment.NewLine, errors));
         var moves = new List<Move>();
         foreach (var file in Files)
         {
             var source = file.Enabled ? file.Path : file.Path + ".disabled";
-            if (!File.Exists(source) || Fingerprint(source) != file.Hash) throw new IOException("扫描后文件发生变化，请重新扫描：" + source);
+            if (!File.Exists(source) || Fingerprint(source) != file.Hash) throw new IOException(L.T("A file changed after scanning. Scan again: ") + source);
             if (file.Selected == file.Enabled) continue;
             var destination = file.Selected ? file.Path : file.Path + ".disabled";
-            if (File.Exists(destination)) throw new IOException("目标文件已存在：" + destination);
+            if (File.Exists(destination)) throw new IOException(L.T("The destination file already exists: ") + destination);
             moves.Add(new Move { Source = source, Destination = destination, Hash = file.Hash });
         }
         if (moves.Count == 0) return;
@@ -235,9 +241,9 @@ public sealed class Installation
             if (!source.StartsWith(PluginRoot + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
                 !destination.StartsWith(PluginRoot + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
                 !(destination == source + ".disabled" || source == destination + ".disabled"))
-                throw new IOException("恢复记录包含非法路径。");
-            if (File.Exists(source) == File.Exists(destination)) throw new IOException("恢复文件状态不明确：" + source);
-            if (Fingerprint(File.Exists(source) ? source : destination) != move.Hash) throw new IOException("恢复文件指纹不匹配：" + source);
+                throw new IOException(L.T("The recovery journal contains an invalid path."));
+            if (File.Exists(source) == File.Exists(destination)) throw new IOException(L.T("The recovery file state is ambiguous: ") + source);
+            if (Fingerprint(File.Exists(source) ? source : destination) != move.Hash) throw new IOException(L.T("The recovery file fingerprint does not match: ") + source);
         }
         foreach (var move in moves.AsEnumerable().Reverse()) if (File.Exists(move.Destination)) File.Move(move.Destination, move.Source);
         File.Delete(Journal);
@@ -267,7 +273,7 @@ public sealed class ConfigDocument
     }
     public void Save(string text)
     {
-        if (!File.ReadAllBytes(Path).SequenceEqual(original)) throw new IOException("配置已被其他程序修改，请重新打开后编辑。");
+        if (!File.ReadAllBytes(Path).SequenceEqual(original)) throw new IOException(L.T("Another program changed this configuration. Reopen it before editing."));
         var bytes = (bom ? encoding.GetPreamble() : new byte[0]).Concat(encoding.GetBytes(text)).ToArray();
         var temporary = Path + ".modlauncher.tmp";
         var backup = Path + ".modlauncher." + DateTime.Now.ToString("yyyyMMddHHmmssfff") + ".bak";

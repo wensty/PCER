@@ -38,6 +38,10 @@
       <HintPath>$(PotionCraftPath)\Potion Craft_Data\Managed\UnityEngine.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Unity.InputSystem">
+      <HintPath>$(PotionCraftPath)\Potion Craft_Data\Managed\Unity.InputSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(PotionCraftPath)\Potion Craft_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>

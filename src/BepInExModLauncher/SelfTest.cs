@@ -18,6 +18,23 @@ internal static class SelfTest
             throw new IOException("测试目录不能在真实游戏目录中。");
         var results = new List<string>();
         void Check(bool condition, string message) { if (!condition) throw new Exception("FAIL: " + message); results.Add("PASS: " + message); }
+        L.SetLanguage("en");
+        Check(L.T("Settings") == "Settings", "English localization");
+        L.SetLanguage("zh-CN");
+        Check(L.T("Settings") == "设置", "Simplified Chinese localization");
+        foreach (var entry in L.Chinese)
+        {
+            var englishFields = System.Text.RegularExpressions.Regex.Matches(entry.Key, @"\{\d+\}").Cast<System.Text.RegularExpressions.Match>().Select(m => m.Value).OrderBy(v => v);
+            var chineseFields = System.Text.RegularExpressions.Regex.Matches(entry.Value, @"\{\d+\}").Cast<System.Text.RegularExpressions.Match>().Select(m => m.Value).OrderBy(v => v);
+            if (!englishFields.SequenceEqual(chineseFields)) throw new Exception("Translation placeholders differ: " + entry.Key);
+            L.T(entry.Key, 1, 2, 3, 4, 5);
+        }
+        Check(true, "All translation format placeholders are valid");
+        Check(L.T("Unregistered text") == "Unregistered text", "Missing translations fall back to English");
+        var chineseSystem = System.Globalization.CultureInfo.GetCultureInfo("zh-CN");
+        Check(new Profile().Language == "en" && L.ResolveLanguage(null, chineseSystem) == "en" && L.ResolveLanguage("en", chineseSystem) == "en", "English is the default even on a Chinese system");
+        Check(L.ResolveLanguage("auto", chineseSystem) == "zh-CN", "System language is used only when explicitly selected");
+        L.SetLanguage("en");
         TestSelections(Check);
         var original = new Installation(sourceRoot); original.Scan();
         foreach (var file in Directory.EnumerateFiles(Path.Combine(sourceRoot, "BepInEx", "plugins"), "*", SearchOption.AllDirectories)
@@ -70,6 +87,12 @@ internal static class SelfTest
         using (var assembly = AssemblyDefinition.CreateAssembly(new AssemblyNameDefinition("GroupedFixture", new Version(1, 0)), "GroupedFixture", ModuleKind.Dll))
         {
             var module = assembly.MainModule;
+            foreach (var metadata in new[] { (typeof(System.Reflection.AssemblyCompanyAttribute), "Fixture Company"), (typeof(System.Reflection.AssemblyDescriptionAttribute), "Description read from the DLL") })
+            {
+                var attribute = new CustomAttribute(module.ImportReference(metadata.Item1.GetConstructor(new[] { typeof(string) })));
+                attribute.ConstructorArguments.Add(new CustomAttributeArgument(module.TypeSystem.String, metadata.Item2));
+                assembly.CustomAttributes.Add(attribute);
+            }
             var pluginAttr = new TypeReference("BepInEx", "BepInPlugin", module, new AssemblyNameReference("BepInEx", new Version(5, 4, 23, 2)));
             var depAttr = new TypeReference("BepInEx", "BepInDependency", module, pluginAttr.Scope);
             for (var i = 0; i < 2; i++)
@@ -88,12 +111,15 @@ internal static class SelfTest
             assembly.Write(groupedPath);
         }
         install.Scan(); Check(install.Files.Single(f => f.Path == groupedPath).Plugins.Count == 2, "同 DLL 多插件作为一组发现");
-        Check(install.Validate(exe).Any(e => e.Contains("循环")), "必需依赖循环检测");
-        var profilePath = Path.Combine(fixtureRoot, "profile-test.json"); var profile = new Profile();
-        profile.Annotations["example"] = new Annotation { Category = "试用·自定义 / 本地修订", Notes = "任意本地备注", Hash = originalHash };
+        var groupedFile = install.Files.Single(f => f.Path == groupedPath);
+        Check(groupedFile.AssemblyName == "GroupedFixture" && groupedFile.Company == "Fixture Company" && groupedFile.Description == "Description read from the DLL", "Assembly information is read directly from DLL metadata");
+        Check(install.Validate(exe).Any(e => e.Contains(L.T("Required dependency cycle: "))), "必需依赖循环检测");
+        var profilePath = Path.Combine(fixtureRoot, "profile-test.json"); var profile = new Profile { Language = "en" };
         Json.Write(profilePath, profile);
-        var annotation = Profile.Read(profilePath).Annotations["example"];
-        Check(annotation.Category == "试用·自定义 / 本地修订" && annotation.Notes == "任意本地备注", "任意本地标签和备注持久化");
+        Check(Profile.Read(profilePath).Language == "en", "Language preference persists locally");
+        var legacyPath = Path.Combine(fixtureRoot, "legacy-profile.json");
+        File.WriteAllText(legacyPath, "{\"GameExe\":\"\",\"Annotations\":[]}");
+        Check(Profile.Read(legacyPath).Language == "en", "Legacy settings without a language default to English");
         File.WriteAllLines(Path.Combine(fixtureRoot, "test-results.txt"), results, Encoding.UTF8);
         void Copy(string path)
         {
@@ -143,6 +169,6 @@ internal static class SelfTest
         var duplicate = Add("shared"); var duplicateUser = Add("duplicate-user"); Require(duplicateUser, "shared");
         ExpectFailure(() => DependencySelection.Set(install, duplicateUser, true, "game.exe"));
         check(!duplicateUser.Selected && !duplicate.Selected, "重复 GUID 不自动猜测依赖候选");
-        check(DependencySelection.Describe(install, broken.Plugins[0].Dependencies[0]).Contains("未安装"), "缺失依赖显示安装状态");
+        check(DependencySelection.Describe(install, broken.Plugins[0].Dependencies[0]).Contains(L.T(" (not installed)")), "缺失依赖显示安装状态");
     }
 }

@@ -11,6 +11,8 @@
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Web.Extensions" />
+    <EmbeddedResource Include="Localization/zh-CN.json" />
     <Reference Include="Mono.Cecil">
       <HintPath>$(PotionCraftPath)\BepInEx\core\Mono.Cecil.dll</HintPath>
       <Private>true</Private>

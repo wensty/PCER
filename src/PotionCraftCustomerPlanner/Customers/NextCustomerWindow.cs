@@ -16,6 +16,7 @@ using PotionCraft.ScriptableObjects.Ingredient;
 using PotionCraft.Settings;
 using PotionCraft.Settings.GameDifficultySettings;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace PotionCraftCustomerPlanner;
 
@@ -43,6 +44,7 @@ internal static class NextCustomerWindow
     private static bool visible;
     private static Rect windowRect = new Rect(60f, 60f, 1840f, 860f);
     private static bool randomRuleWindowVisible;
+    private static readonly PlannerChildWindows ChildWindows = new PlannerChildWindows();
     private static Rect randomRuleWindowRect = new Rect(120f, 120f, 860f, 720f);
     private static Vector2 customersScroll;
     private static Vector2 detailsScroll;
@@ -217,16 +219,15 @@ internal static class NextCustomerWindow
             "CustomerSelectedColor",
             "#4C74B8",
             "Selected-state color for the customer list.");
-        visible = startVisible.Value;
+        SetPlannerVisible(startVisible.Value);
     }
 
     public static void Update()
     {
-        if (toggleShortcut.Value.IsDown())
+        bool escapeHandled = (Keyboard.current?.escapeKey.wasPressedThisFrame ?? false) && TryHandleEscape();
+        if (!escapeHandled && toggleShortcut.Value.IsDown())
         {
-            visible = !visible;
-            if (!visible)
-                ClosePicker();
+            SetPlannerVisible(!visible);
         }
 
         if (visible)
@@ -236,8 +237,51 @@ internal static class NextCustomerWindow
         }
     }
 
+    internal static bool WasEscapeHandledThisFrame => ChildWindows.WasEscapeHandled(Time.frameCount);
+
+    private static void SetPlannerVisible(bool value)
+    {
+        visible = value;
+        if (visible)
+            ChildWindows.Open(PlannerChildWindow.Main);
+        else
+        {
+            ChildWindows.Close(PlannerChildWindow.Main);
+            ClosePicker();
+        }
+    }
+
+    internal static bool TryHandleEscape()
+    {
+        // Closing the main window must still consume subsequent dispatches of
+        // this press, even though the planner is now hidden.
+        if (WasEscapeHandledThisFrame)
+            return true;
+        if (!visible || !ChildWindows.TryCloseLast(Time.frameCount, out PlannerChildWindow? window))
+            return false;
+
+        if (window == PlannerChildWindow.Picker)
+            ClosePicker();
+        else if (window == PlannerChildWindow.RandomRule)
+            CloseRandomRuleWindow();
+        else if (window == PlannerChildWindow.Main)
+            SetPlannerVisible(false);
+
+        return true;
+    }
+
     public static void OnGui()
     {
+        Event evt = Event.current;
+        if (evt.type == EventType.KeyDown && evt.keyCode == KeyCode.Escape)
+        {
+            if (Keyboard.current?.escapeKey.wasPressedThisFrame ?? false)
+                TryHandleEscape();
+            // Ignore IMGUI key repeat; a new physical press closes one window.
+            if (visible || WasEscapeHandledThisFrame)
+                evt.Use();
+        }
+
         if (!visible)
             return;
 
@@ -917,9 +961,21 @@ internal static class NextCustomerWindow
 
     private static void ToggleRandomRuleWindow()
     {
-        randomRuleWindowVisible = !randomRuleWindowVisible;
         if (randomRuleWindowVisible)
-            SyncRandomRuleChanceDefaults();
+        {
+            CloseRandomRuleWindow();
+            return;
+        }
+
+        SyncRandomRuleChanceDefaults();
+        randomRuleWindowVisible = true;
+        ChildWindows.Open(PlannerChildWindow.RandomRule);
+    }
+
+    private static void CloseRandomRuleWindow()
+    {
+        randomRuleWindowVisible = false;
+        ChildWindows.Close(PlannerChildWindow.RandomRule);
     }
 
     private static void DrawRandomRuleWindow(int id)
@@ -956,7 +1012,7 @@ internal static class NextCustomerWindow
         if (GUILayout.Button(T("randomRule.reset"), Height(28f)))
             ResetRandomRule();
         if (GUILayout.Button(T("randomRule.close"), Height(28f)))
-            randomRuleWindowVisible = false;
+            CloseRandomRuleWindow();
         GUILayout.EndHorizontal();
         GUI.DragWindow(new Rect(0f, 0f, 10000f, WindowTitleHeight()));
     }
@@ -1253,7 +1309,7 @@ internal static class NextCustomerWindow
         foreach (GeneratedQuestRequirement requirement in optionalRequirements ?? Array.Empty<GeneratedQuestRequirement>())
             ImportGeneratedRequirement(requirement, RequirementSelection.Optional);
 
-        targetPickerOpen = false;
+        ClosePicker();
     }
 
     private static void ImportGeneratedRequirement(
@@ -1347,7 +1403,7 @@ internal static class NextCustomerWindow
         RequirementTargets.Clear();
         TargetOptionsCache.Clear();
         IngredientCompatibilityCache.Clear();
-        targetPickerOpen = false;
+        ClosePicker();
     }
 
     private static bool CacheAndMatchFilters(RegularCustomerOption option)
@@ -2509,6 +2565,7 @@ internal static class NextCustomerWindow
         RebuildPickerOptionCache();
         targetPickerScroll = Vector2.zero;
         targetPickerOpen = true;
+        ChildWindows.Open(PlannerChildWindow.Picker);
         targetPickerAnchorKey = anchorKey;
         targetPickerAnchorSource = anchorSource;
         targetPickerFallbackGuiRect = buttonRect;
@@ -2548,14 +2605,6 @@ internal static class NextCustomerWindow
 
     private static void DrawPickerModalContents(int id)
     {
-        Event evt = Event.current;
-        if (evt.type == EventType.KeyDown && evt.keyCode == KeyCode.Escape)
-        {
-            ClosePicker();
-            evt.Use();
-            return;
-        }
-
         bool oldEnabled = GUI.enabled;
         GUI.enabled = true;
         Rect localRect = new Rect(0f, 0f, targetPickerModalRect.width, targetPickerModalRect.height);
@@ -3892,6 +3941,7 @@ internal static class NextCustomerWindow
         RebuildPickerOptionCache();
         targetPickerScroll = Vector2.zero;
         targetPickerOpen = true;
+        ChildWindows.Open(PlannerChildWindow.Picker);
         targetPickerAnchorKey = anchorKey;
         targetPickerAnchorSource = anchorSource;
         targetPickerFallbackGuiRect = buttonRect;
@@ -3902,6 +3952,7 @@ internal static class NextCustomerWindow
     private static void ClosePicker()
     {
         targetPickerOpen = false;
+        ChildWindows.Close(PlannerChildWindow.Picker);
         targetPickerAnchorKey = string.Empty;
         targetPickerAnchorSource = string.Empty;
         targetPickerFallbackGuiRect = Rect.zero;
